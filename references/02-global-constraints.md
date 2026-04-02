@@ -106,14 +106,15 @@ If you cannot produce (1) + (2), you MUST NOT proceed.
 
 For transfer decisions, indices are evidence only; execution input must be stable identifiers.
 
-- Extract links exactly once into `all_links` for the current decision window.
-- After deciding, bind execution inputs immediately: `chosen_urls=[...]` (or `chosen_url=...`).
-- Transfer step MUST use only the bound URL variable(s); do not execute via `all_links[i]`.
+- Extract links exactly once into a `LinkSnapshot` for the current decision window.
+- After deciding, bind execution inputs immediately from that same snapshot: `chosen_urls=snapshot.bind_indices([...])` (or `chosen_url=...`).
+- Transfer step MUST use only those bound URL variable(s); do not execute via `all_links[i]` or raw re-extracted strings.
 - Between decision and transfer, do NOT re-extract/re-list/re-sort links.
 
 Forbidden patterns:
 - Re-running `extract_all_links(...).each(...)` between decision and transfer.
 - `pan115.transfer(url=all_links[i]["url"], ...)` in execution step.
+- `pan115.transfer(url="<raw string>", ...)` with an unbound URL.
 - Any "decide on [i], then re-fetch and execute [i]" flow.
 
 #### Side-effect Verification (mandatory)

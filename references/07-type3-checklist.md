@@ -42,6 +42,7 @@ For scheduled monitoring (sub-agent cron job):
 
 □ Step 5: Extract and Analyze Links
   └── Extract ALL links using .each()
+  └── Freeze the same result set with `snapshot = pansou.extract_link_snapshot(...)`
   └── ⚠️ STOP - Evidence required:
       └── Print EVERY link title with an index: [i] title
       └── No truncation (`[:N]`, top-N, "...and N more") is allowed
@@ -52,7 +53,7 @@ For scheduled monitoring (sub-agent cron job):
       └── **VERIFY: Missing episodes are {show.missing}, confirm selected links cover EXACTLY these**
       └── If ANY link's episode cannot be determined from title → SKIP that link
       └── If missing episode not found in any link → Report "No covering resource found"
-      └── Output `chosen_indices=[...]` and `chosen_urls=[...]` (bind once from SAME list for Step 7)
+      └── Output `chosen_indices=[...]` and `chosen_urls=[...]` (bind once from SAME snapshot for Step 7)
   └── Selection safety (Type 3):
       └── If multiple resources cover the missing episodes, prefer the one with LESS overlap
       └── Avoid transferring massive full-season packs when a smaller exact-range resource exists
@@ -70,6 +71,7 @@ For scheduled monitoring (sub-agent cron job):
 □ Step 7: Transfer
   └── Use only URL variables bound in Step 5 (`chosen_url` / `chosen_urls`)
   └── Forbidden: re-extract links then `all_links[i]` lookup at execution time
+  └── `pan115.transfer()` rejects unbound raw URLs
   └── pan115.transfer(url=url, save_dir_id=show.save_dir_id)
   └── ⚠️ STOP - Output `success=<bool>, msg=<text>` from transfer result
 

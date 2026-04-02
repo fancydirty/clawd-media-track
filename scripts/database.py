@@ -34,6 +34,17 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self._init_db()
 
+    def close(self):
+        if getattr(self, "conn", None) is not None:
+            self.conn.close()
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
     def _init_db(self):
         self.conn.execute(
             """

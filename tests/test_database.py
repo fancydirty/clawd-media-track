@@ -18,16 +18,27 @@ def load_database_module(test_case: unittest.TestCase):
 
 
 class DatabaseCoreTests(unittest.TestCase):
+    def test_database_context_manager_closes_connection_on_exit(self):
+        database = load_database_module(self)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "tracking.db")
+            with database.Database(db_path=db_path) as db:
+                row = db.conn.execute("SELECT 1 AS value").fetchone()
+
+            self.assertIsNone(db.conn)
+
+        self.assertEqual(row["value"], 1)
+
     def test_init_creates_shows_table(self):
         database = load_database_module(self)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-
-            row = db.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='shows'"
-            ).fetchone()
+            with database.Database(db_path=db_path) as db:
+                row = db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='shows'"
+                ).fetchone()
 
         self.assertIsNotNone(row)
         self.assertEqual(row["name"], "shows")
@@ -37,13 +48,12 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-
-            show_id = db.add_show(tmdb_id=1001, name="除恶", total_episodes=16)
-            row = db.conn.execute(
-                "SELECT * FROM shows WHERE id=?",
-                (show_id,),
-            ).fetchone()
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=1001, name="除恶", total_episodes=16)
+                row = db.conn.execute(
+                    "SELECT * FROM shows WHERE id=?",
+                    (show_id,),
+                ).fetchone()
 
         self.assertGreater(show_id, 0)
         self.assertEqual(row["tmdb_id"], 1001)
@@ -59,10 +69,9 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-
-            with self.assertRaises(ValueError) as ctx:
-                db.add_show(tmdb_id=1002, name="匹兹堡", season=0)
+            with database.Database(db_path=db_path) as db:
+                with self.assertRaises(ValueError) as ctx:
+                    db.add_show(tmdb_id=1002, name="匹兹堡", season=0)
 
         self.assertIn("season", str(ctx.exception).lower())
 
@@ -71,10 +80,9 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=2002, name="太平年")
-
-            episodes = db._get_episodes(show_id)
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=2002, name="太平年")
+                episodes = db._get_episodes(show_id)
 
         self.assertEqual(episodes, [])
 
@@ -83,14 +91,14 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=3003, name="地狱担保人")
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=3003, name="地狱担保人")
 
-            db.update_save_dir(show_id=show_id, save_dir_id="season-dir-cid")
-            row = db.conn.execute(
-                "SELECT save_dir_id FROM shows WHERE id=?",
-                (show_id,),
-            ).fetchone()
+                db.update_save_dir(show_id=show_id, save_dir_id="season-dir-cid")
+                row = db.conn.execute(
+                    "SELECT save_dir_id FROM shows WHERE id=?",
+                    (show_id,),
+                ).fetchone()
 
         self.assertEqual(row["save_dir_id"], "season-dir-cid")
 
@@ -99,20 +107,20 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=4004, name="风起陇西")
-            db.conn.execute(
-                "UPDATE shows SET episodes_status=? WHERE id=?",
-                (
-                    '[{"episode":"S01E01","name":"第一集","obtained":false},'
-                    '{"episode":"S01E02","name":"第二集","obtained":false}]',
-                    show_id,
-                ),
-            )
-            db.conn.commit()
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=4004, name="风起陇西")
+                db.conn.execute(
+                    "UPDATE shows SET episodes_status=? WHERE id=?",
+                    (
+                        '[{"episode":"S01E01","name":"第一集","obtained":false},'
+                        '{"episode":"S01E02","name":"第二集","obtained":false}]',
+                        show_id,
+                    ),
+                )
+                db.conn.commit()
 
-            db.mark_obtained(show_id=show_id, episode_codes=["S01E02"])
-            episodes = db._get_episodes(show_id)
+                db.mark_obtained(show_id=show_id, episode_codes=["S01E02"])
+                episodes = db._get_episodes(show_id)
 
         self.assertEqual(len(episodes), 2)
         self.assertFalse(episodes[0].obtained)
@@ -123,14 +131,14 @@ class DatabaseCoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=5005, name="除恶")
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=5005, name="除恶")
 
-            deleted = db.delete_show(show_id=show_id)
-            row = db.conn.execute(
-                "SELECT id FROM shows WHERE id=?",
-                (show_id,),
-            ).fetchone()
+                deleted = db.delete_show(show_id=show_id)
+                row = db.conn.execute(
+                    "SELECT id FROM shows WHERE id=?",
+                    (show_id,),
+                ).fetchone()
 
         self.assertTrue(deleted)
         self.assertIsNone(row)
@@ -166,20 +174,20 @@ class DatabaseSyncTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(
-                tmdb_id=9001,
-                name="除恶",
-                season=1,
-                year=2026,
-                category="tv",
-                quality_pref="4K",
-                save_dir_id="season-dir-cid",
-                total_episodes=10,
-            )
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(
+                    tmdb_id=9001,
+                    name="除恶",
+                    season=1,
+                    year=2026,
+                    category="tv",
+                    quality_pref="4K",
+                    save_dir_id="season-dir-cid",
+                    total_episodes=10,
+                )
 
-            shows = db.sync_all(tmdb_client=tmdb)
-            episodes = db._get_episodes(show_id)
+                shows = db.sync_all(tmdb_client=tmdb)
+                episodes = db._get_episodes(show_id)
 
         self.assertEqual(len(shows), 1)
         show = shows[0]
@@ -205,23 +213,23 @@ class DatabaseSyncTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=9002, name="太平年", season=1, total_episodes=2)
-            db.conn.execute(
-                "UPDATE shows SET episodes_status=? WHERE id=?",
-                (
-                    '[{"episode":"S01E01","name":"第一集","obtained":true},'
-                    '{"episode":"S01E02","name":"第二集","obtained":true}]',
-                    show_id,
-                ),
-            )
-            db.conn.commit()
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=9002, name="太平年", season=1, total_episodes=2)
+                db.conn.execute(
+                    "UPDATE shows SET episodes_status=? WHERE id=?",
+                    (
+                        '[{"episode":"S01E01","name":"第一集","obtained":true},'
+                        '{"episode":"S01E02","name":"第二集","obtained":true}]',
+                        show_id,
+                    ),
+                )
+                db.conn.commit()
 
-            shows = db.sync_all(tmdb_client=tmdb)
-            row = db.conn.execute(
-                "SELECT status FROM shows WHERE id=?",
-                (show_id,),
-            ).fetchone()
+                shows = db.sync_all(tmdb_client=tmdb)
+                row = db.conn.execute(
+                    "SELECT status FROM shows WHERE id=?",
+                    (show_id,),
+                ).fetchone()
 
         self.assertEqual(shows, [])
         self.assertEqual(row["status"], "completed")
@@ -239,12 +247,12 @@ class DatabaseSyncTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "tracking.db")
-            db = database.Database(db_path=db_path)
-            show_id = db.add_show(tmdb_id=9003, name="匹兹堡", season=1, total_episodes=1)
-            db.conn.execute("UPDATE shows SET season=0 WHERE id=?", (show_id,))
-            db.conn.commit()
+            with database.Database(db_path=db_path) as db:
+                show_id = db.add_show(tmdb_id=9003, name="匹兹堡", season=1, total_episodes=1)
+                db.conn.execute("UPDATE shows SET season=0 WHERE id=?", (show_id,))
+                db.conn.commit()
 
-            with self.assertRaises(ValueError) as ctx:
-                db.sync_all(tmdb_client=tmdb)
+                with self.assertRaises(ValueError) as ctx:
+                    db.sync_all(tmdb_client=tmdb)
 
         self.assertIn("season", str(ctx.exception).lower())

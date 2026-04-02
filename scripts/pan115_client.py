@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Optional
 
 from p115client import P115Client
+from pansou_client import BoundTransferUrl
 
 
 class FileCollection:
@@ -454,19 +455,29 @@ class Pan115Client:
         return (True, "")
 
     def transfer(
-        self, *, url: str, save_dir_id: str, allow_duplicate: bool = False
+        self,
+        *,
+        url: Any,
+        save_dir_id: str,
+        allow_duplicate: bool = False,
     ) -> tuple[bool, str]:
-        if not isinstance(url, str):
-            raise ValueError(f"url must be a string, got {url}")
+        if isinstance(url, BoundTransferUrl):
+            normalized_url = str(url)
+        elif isinstance(url, str):
+            raise ValueError(
+                "TRANSFER_BINDING_REQUIRED: bind URLs from a LinkSnapshot before transfer."
+            )
+        else:
+            raise ValueError(f"url must be a bound transfer URL or string, got {url}")
         if not isinstance(save_dir_id, (str, int)) or not str(save_dir_id).isdigit():
             raise ValueError(f"save_dir_id must be a numeric cid, got {save_dir_id}")
 
         save_dir_id_str = str(save_dir_id)
-        if url.startswith(("https://115cdn.com/s/", "https://115.com/s/")):
-            return self.transfer_115(url=url, save_dir_id=save_dir_id_str)
-        if url.startswith("magnet:?xt=urn:btih:"):
-            return self.transfer_magnet(url=url, save_dir_id=save_dir_id_str)
-        raise ValueError(f"unrecognized url type: {url[:50]}...")
+        if normalized_url.startswith(("https://115cdn.com/s/", "https://115.com/s/")):
+            return self.transfer_115(url=normalized_url, save_dir_id=save_dir_id_str)
+        if normalized_url.startswith("magnet:?xt=urn:btih:"):
+            return self.transfer_magnet(url=normalized_url, save_dir_id=save_dir_id_str)
+        raise ValueError(f"unrecognized url type: {normalized_url[:50]}...")
 
     def move_items(self, *, item_ids: List[str], target_dir_id: str) -> Dict[str, List[str]]:
         if not item_ids:

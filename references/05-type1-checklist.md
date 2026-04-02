@@ -33,8 +33,9 @@ If any item above is violated, stop and report failure instead of continuing.
   └── links = pansou.extract_all_links(result["115"], "115")
   └── all_links = []
   └── links.each(lambda i, link: all_links.append(link))
+  └── snapshot = pansou.extract_link_snapshot(result["115"], "115")
   └── ⚠️ STOP - Output `covered_missing=[...]` and `uncovered_missing=[...]` using title-index evidence
-  └── ⚠️ STOP - Output `chosen_indices=[...]` and `chosen_urls=[...]` (bind URLs from SAME `all_links`; no re-extract)
+  └── ⚠️ STOP - Output `chosen_indices=[...]` and `chosen_urls=[...]` (bind from SAME `snapshot`; no re-extract)
   └── **Type 1 vs Type 2 Selection Strategy**:
       └── **Type 1** (Movies/Completed): Compare ALL resources, select LARGEST
           └── Compare file sizes explicitly (evidence-first). Do NOT write sorting/parsing helpers.
@@ -53,6 +54,7 @@ If any item above is violated, stop and report failure instead of continuing.
 
 □ Step 7: Batch Transfer
   └── Transfer using `chosen_urls` bound in Step 4 (no index lookup in execution)
+  └── `pan115.transfer()` accepts only snapshot-bound URLs
   └── Do NOT re-run extract/list before transfer
   └── Record success/msg for each
   └── ⚠️ STOP - Output `transfer_ok_count=<n>` and per-link `success/msg`

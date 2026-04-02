@@ -444,17 +444,50 @@ class Pan115ClientWriteMethodTests(unittest.TestCase):
         self.assertEqual(cid, "new-folder-cid")
         self.assertEqual(client.client.mkdir_calls[0], ("Transfer Test", "123"))
 
-    def test_transfer_routes_115_share_links(self):
+    def test_transfer_rejects_unbound_raw_url_by_default(self):
         pan115_client = load_pan115_module(self)
 
         with patch.dict(os.environ, {"PAN115_COOKIE": "env-cookie"}, clear=True):
             with patch.object(pan115_client, "P115Client", FakeP115ClientWithFiles):
                 client = pan115_client.Pan115Client()
 
-        success, message = client.transfer(
-            url="https://115cdn.com/s/abc123?password=pass",
-            save_dir_id="123",
+        with self.assertRaises(ValueError) as ctx:
+            client.transfer(
+                url="https://115cdn.com/s/abc123?password=pass",
+                save_dir_id="123",
+            )
+
+        self.assertIn("TRANSFER_BINDING_REQUIRED", str(ctx.exception))
+        self.assertEqual(client.client.share_calls, [])
+
+    def test_transfer_accepts_bound_115_url(self):
+        pan115_client = load_pan115_module(self)
+        scripts_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "scripts")
         )
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import pansou_client  # type: ignore
+
+        with patch.dict(os.environ, {"PAN115_COOKIE": "env-cookie"}, clear=True):
+            with patch.object(pan115_client, "P115Client", FakeP115ClientWithFiles):
+                client = pan115_client.Pan115Client()
+
+        snapshot = pansou_client.LinkSnapshot(
+            [
+                {
+                    "title": "Bound Resource",
+                    "type": "115",
+                    "url": "https://115cdn.com/s/abc123?password=pass",
+                    "password": "pass",
+                    "datetime": "",
+                    "source": "demo",
+                }
+            ]
+        )
+        chosen_url = snapshot.bind_indices([0])[0]
+
+        success, message = client.transfer(url=chosen_url, save_dir_id="123")
 
         self.assertTrue(success)
         self.assertEqual(message, "")
@@ -462,17 +495,34 @@ class Pan115ClientWriteMethodTests(unittest.TestCase):
         self.assertEqual(client.client.share_calls[0]["receive_code"], "pass")
         self.assertEqual(client.client.share_calls[0]["cid"], "123")
 
-    def test_transfer_routes_magnet_links(self):
+    def test_transfer_accepts_bound_magnet_url(self):
         pan115_client = load_pan115_module(self)
+        scripts_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "scripts")
+        )
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import pansou_client  # type: ignore
 
         with patch.dict(os.environ, {"PAN115_COOKIE": "env-cookie"}, clear=True):
             with patch.object(pan115_client, "P115Client", FakeP115ClientWithFiles):
                 client = pan115_client.Pan115Client()
 
-        success, message = client.transfer(
-            url="magnet:?xt=urn:btih:abcdef123456",
-            save_dir_id="123",
+        snapshot = pansou_client.LinkSnapshot(
+            [
+                {
+                    "title": "Bound Magnet",
+                    "type": "magnet",
+                    "url": "magnet:?xt=urn:btih:abcdef123456",
+                    "password": "",
+                    "datetime": "",
+                    "source": "demo",
+                }
+            ]
         )
+        chosen_url = snapshot.bind_indices([0])[0]
+
+        success, message = client.transfer(url=chosen_url, save_dir_id="123")
 
         self.assertTrue(success)
         self.assertEqual(message, "")

@@ -1,8 +1,27 @@
 import os
 import re
+from hashlib import sha1
 from typing import Any, Callable, Dict, List, Optional
 
 import requests
+
+
+class BoundTransferUrl(str):
+    def __new__(
+        cls,
+        url: str,
+        *,
+        snapshot_id: str,
+        link_index: int,
+        title: str,
+        link_type: str,
+    ):
+        obj = str.__new__(cls, url)
+        obj.snapshot_id = snapshot_id
+        obj.link_index = link_index
+        obj.title = title
+        obj.link_type = link_type
+        return obj
 
 
 class LinkCollection:
@@ -47,6 +66,55 @@ class LinkCollection:
     def to_list(self) -> List[Dict[str, Any]]:
         print("WARNING: to_list() called. Make sure you iterate all items.")
         return self._items.copy()
+
+
+class LinkSnapshot:
+    def __init__(self, items: List[Dict[str, Any]]):
+        self._items = tuple(dict(item) for item in items)
+        self.snapshot_id = self._compute_snapshot_id(items)
+
+    @staticmethod
+    def _compute_snapshot_id(items: List[Dict[str, Any]]) -> str:
+        parts = []
+        for item in items:
+            parts.append(
+                "|".join(
+                    [
+                        str(item.get("type", "")),
+                        str(item.get("title", "")),
+                        str(item.get("url", "")),
+                    ]
+                )
+            )
+        return sha1("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+    def __len__(self):
+        return len(self._items)
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            raise ValueError("Slicing is not allowed on LinkSnapshot.")
+        return dict(self._items[key])
+
+    def bind_indices(self, indices: List[int]) -> List[BoundTransferUrl]:
+        if not isinstance(indices, list) or any(not isinstance(i, int) for i in indices):
+            raise TypeError("indices must be a list[int]")
+
+        bound_urls: List[BoundTransferUrl] = []
+        for index in indices:
+            if index < 0 or index >= len(self._items):
+                raise IndexError(f"link index out of range: {index}")
+            item = self._items[index]
+            bound_urls.append(
+                BoundTransferUrl(
+                    str(item.get("url", "")),
+                    snapshot_id=self.snapshot_id,
+                    link_index=index,
+                    title=str(item.get("title", "")),
+                    link_type=str(item.get("type", "")),
+                )
+            )
+        return bound_urls
 
 
 class PansouClient:
@@ -131,9 +199,9 @@ class PansouClient:
             response_data["keyword_original"] = keyword
         return response_data
 
-    def extract_all_links(
+    def _collect_links(
         self, results: List[Dict[str, Any]], link_type: Optional[str] = None
-    ) -> LinkCollection:
+    ) -> List[Dict[str, Any]]:
         links = []
         seen_urls = set()
 
@@ -161,4 +229,14 @@ class PansouClient:
                     }
                 )
 
-        return LinkCollection(links)
+        return links
+
+    def extract_all_links(
+        self, results: List[Dict[str, Any]], link_type: Optional[str] = None
+    ) -> LinkCollection:
+        return LinkCollection(self._collect_links(results, link_type=link_type))
+
+    def extract_link_snapshot(
+        self, results: List[Dict[str, Any]], link_type: Optional[str] = None
+    ) -> LinkSnapshot:
+        return LinkSnapshot(self._collect_links(results, link_type=link_type))

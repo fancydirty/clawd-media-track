@@ -64,13 +64,16 @@ result = pansou.search("太平年")
 # Returns: {"115": [...], "magnet": [...]} - raw result lists
 # ⚠️ STOP - Output `115_count=<n>, magnet_count=<n>` via len(result["115"]), len(result["magnet"])
 
-# Extract 115 links
+# Extract all links for evidence
 links_115 = pansou.extract_all_links(result["115"], link_type="115")
 # Output: 🔍 EXTRACT RESULT: X links found
 # ⚠️ STOP - Must use .each() to iterate ALL
 all_115 = []
 links_115.each(lambda i, link: all_115.append(link))
 # Output: ✅ Successfully processed all X links
+
+# Freeze the current decision window for later binding
+snapshot_115 = pansou.extract_link_snapshot(result["115"], link_type="115")
 
 # Extract magnet links
 links_magnet = pansou.extract_all_links(result["magnet"], link_type="magnet")
@@ -79,6 +82,9 @@ links_magnet = pansou.extract_all_links(result["magnet"], link_type="magnet")
 all_magnets = []
 links_magnet.each(lambda i, link: all_magnets.append(link))
 # Output: ✅ Successfully processed all X links
+
+# Freeze the current decision window for later binding
+snapshot_magnet = pansou.extract_link_snapshot(result["magnet"], link_type="magnet")
 ```
 
 `PansouClient()` reads `PANSOU_BASE_URL` from environment by default.
@@ -223,9 +229,10 @@ for i, link in enumerate(all_links):
 # - Explain WHY each chosen title matches (use common sense, not parsing code).
 # - Explain WHY each rejected title is wrong.
 
-# Step 4: Bind stable URLs once, then transfer by URL variable
+# Step 4: Bind stable URLs once from the SAME snapshot, then transfer by URL variable
 chosen_indices = []  # Filled after Step 3 decision (indices are evidence only)
-chosen_urls = [all_links[i]["url"] for i in chosen_indices]  # bind once, no re-extract
+snapshot = pansou.extract_link_snapshot(result["magnet"], "magnet")
+chosen_urls = snapshot.bind_indices(chosen_indices)
 for url in chosen_urls:
     pan115.transfer(url=url, save_dir_id=folder_id)
 ```
