@@ -38,14 +38,20 @@ For scheduled monitoring (sub-agent cron job):
 □ Step 4: Pansou Search
   └── pansou.search(show.name)
   └── ⚠️ STOP - Evidence required:
-      └── Print 115 count and magnet count (0 is allowed)
+      └── 必须同时报告：115_count=X, magnet_count=Y（两者缺一不可）
+      └── 如果任一类 count>0，必须在后续步骤中提取并分析该类链接
+      └── 禁止在没展示链接前就下"XX链接不可用"的结论
 
 □ Step 5: Extract and Analyze Links
-  └── Extract ALL links using .each()
+  └── 必须分别提取 115 链接和 magnet 链接：
+      └── links_115 = pansou.extract_all_links(result["115"], "115") 如果 115_count>0
+      └── links_magnet = pansou.extract_all_links(result["magnet"], "magnet") 如果 magnet_count>0
+      └── 只要 count>0，就必须用 .each() 遍历全部并展示标题
   └── Freeze the same result set with `snapshot = pansou.extract_link_snapshot(...)`
   └── ⚠️ STOP - Evidence required:
       └── Print EVERY link title with an index: [i] title
       └── No truncation (`[:N]`, top-N, "...and N more") is allowed
+      └── 分别展示 115 链接和 magnet 链接的分析结果
       └── **MANDATORY: Explicit episode mapping (one line per link)**
           └── Format: "[i] {title} → Episode: {X} | Select: {YES/NO} | Reason: {...}"
           └── Example: "[3] 七王国的骑士.S01E06.1080p → Episode: E06 | Select: YES | Reason: Matches missing E06"
@@ -55,11 +61,17 @@ For scheduled monitoring (sub-agent cron job):
       └── If missing episode not found in any link → Report "No covering resource found"
       └── Output `chosen_indices=[...]` and `plan.snapshot_id=<id>` (create exactly one plan from SAME snapshot for Step 7)
   └── Selection safety (Type 3):
-      └── If multiple resources cover the missing episodes, prefer the one with LESS overlap
-      └── Avoid transferring massive full-season packs when a smaller exact-range resource exists
+      └── 优先选择精确匹配缺失集数的小范围资源
+      └── 如果选中的分散资源存在缺口（如缺 E08），必须同时选择能补齐该缺口的季包/全集包
+      └── 禁止因为"避免大包"而放弃唯一能覆盖缺失集数的资源
       └── If you still choose a massive pack, justify the tradeoff (coverage/quality vs dedup risk)
   └── Apply Rule 7 (no "just in case" transfers)
   └── Apply Rule 8 (strict season matching if show.season > 1)
+
+□ Step 5b: Honesty Principle
+  └── 禁止编造结论
+  └── 如果某部分无法确定，必须写"不确定/待验证"
+  └── 绝对禁止写"没有"、"不可用"或"资源不存在"等绝对化表述（除非已经完整遍历并验证）
 
 □ Step 6: Decision Point
   └── If NO resource covers missing episodes:
@@ -105,6 +117,10 @@ For scheduled monitoring (sub-agent cron job):
       └── ⚠️ STOP - Output `duplicate_groups_after={episode:[indices...]}` and require all groups size == 1
 
 □ Step 10: Mark Obtained
+  └── ⚠️ BEFORE marking, verify physical files exist in 115 for ALL episodes you plan to mark
+  └── Known issue: after flatten_directory, some files may disappear (e.g., E09/E10 vanished)
+  └── Cross-reference Step 9 all_videos list against the episode_codes you plan to mark
+  └── If an episode is in DB as missing but NOT found in Step 9 file list, do NOT mark it obtained
   └── db.mark_obtained(show_id=show.show_id, episode_codes=[...])
   └── ⚠️ STOP - Output `marked=<count>` and `episode_codes=[...]` for this show
 

@@ -138,7 +138,9 @@ result = pansou.search("匹兹堡医护前线 第二季")  # Don't do this!
 1. Search without season → Check coverage
 2. If insufficient, retry WITH season → Check coverage  
 3. Try traditional Chinese → Check coverage
-4. Give up if still no coverage
+4. Try keyword + year (e.g., "白日提灯 2026") → Often surfaces magnet links not found in plain search
+5. If 115 links all fail ("分享已拒绝"), use magnet links from year-suffixed search as fallback
+6. Give up if still no coverage
 
 ### For Movies - Search WITHOUT Year
 
@@ -236,7 +238,9 @@ for i, link in enumerate(all_links):
 chosen_indices = []  # Filled after Step 3 decision (indices are evidence only)
 snapshot = pansou.extract_link_snapshot(result["magnet"], "magnet")
 plan = snapshot.create_transfer_plan(chosen_indices, keyword="太平年")
+# TransferPlan uses .to_urls() method (not .urls attribute)
 results = pan115.execute_transfer_plan(plan=plan, save_dir_id=folder_id)
+# Each result dict has keys: success, message (not "msg"), url, title, snapshot_id, link_index
 ```
 
 Between plan creation and execution:
@@ -385,6 +389,21 @@ videos.each(lambda i, v: all_videos.append(v))
 # Transfer resource
 success, msg = pan115.transfer(url=url, save_dir_id=folder_id)
 # ⚠️ STOP - Output `success=<bool>, msg=<text>` from transfer result
+
+# TransferPlan and execute_transfer_plan
+# snapshot.create_transfer_plan(indices, keyword) returns a TransferPlan object
+# TransferPlan attributes: .keyword, .snapshot_id, .release
+# TransferPlan method: .to_urls() — returns list of URL strings (NOT .urls)
+#
+# execute_transfer_plan returns list of dicts, each with keys:
+#   success (bool), message (str, NOT "msg"), url, title, snapshot_id, link_index
+#
+# Example:
+# results = pan115.execute_transfer_plan(plan=plan, save_dir_id=folder_id)
+# for r in results:
+#     print(f"success={r['success']}, message={r['message']}, title={r['title']}")
+#
+# ⚠️ STOP - Output per-item success/message from transfer result
 
 # Flatten directory
 result = pan115.flatten_directory(dir_id=folder_id)
@@ -561,11 +580,27 @@ db.update_save_dir(show_id=show_id, save_dir_id="folder_cid")
 from tmdb_client import TMDBClient
 tmdb = TMDBClient()
 shows = db.sync_all(tmdb_client=tmdb)
+# ⚠️ IMPORTANT: sync_all() returns a list of Show OBJECTS (not dicts)
+# Show object attributes:
+#   show_id, tmdb_id, name, season, year, category, quality_pref,
+#   total_episodes, latest_episode, latest_season, save_dir_id,
+#   episodes (list), missing (list of Episode objects)
+#
+# Episode object attributes:
+#   episode (str, e.g. "S01E13"), name (str, e.g. "第 13 集"), obtained (bool)
+#
+# Access: s.name, s.show_id, s.missing, etc. (NOT dict s['name'])
+# Missing episodes: [m.episode for m in s.missing]
+#
+# ⚠️ Shows with ZERO missing episodes do NOT appear in sync_all() results.
+#    If a show is fully obtained, it disappears from the list automatically.
 # ⚠️ STOP - Output `shows_with_missing=[{show_id,missing[]}, ...]` from sync_all
 
 # Mark episodes as obtained
 db.mark_obtained(show_id=show_id, episode_codes=["S01E01", "S01E02"])
-# ⚠️ STOP - Output `marked=<count>` and `episode_codes=[...]`
+# ⚠️ Returns None (not a count). Success is verified by re-running sync_all
+#   and checking the show still appears with updated missing list.
+# ⚠️ STOP - Output `episode_codes=[...]` and verify via sync_all
 
 # Delete show tracking
 db.delete_show(show_id=show_id)

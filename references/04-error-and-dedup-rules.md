@@ -26,12 +26,19 @@
 # Do NOT transfer random resources hoping they contain target episodes!
 ```
 
-### Resource Unavailable (410 Gone, "expired", "失效")
+### Resource Unavailable (410 Gone, "expired", "失效", "分享已拒绝")
 
 ```python
-# Error: Resource expired / 410 Gone
-# Cause: Normal - resources expire frequently
+# Error: Resource expired / 410 Gone / "分享已拒绝"
+# Cause: Normal - resources expire or share is revoked by owner
 # Action: Try next resource in list. This is expected behavior.
+#
+# ⚠️ IMPORTANT: "分享已拒绝" is a very common failure for 115 share links.
+# When ALL 115 links return "分享已拒绝", fall back to magnet links:
+# 1. Re-search with keyword + year (e.g., "白日提灯 2026")
+# 2. Extract magnet links from the new result
+# 3. Use magnet transfer as fallback
+# This fallback strategy rescued 白日提灯 when 13/13 115 links were refused.
 ```
 
 ### 115 Rate Limit (405, 403, "too many requests")
