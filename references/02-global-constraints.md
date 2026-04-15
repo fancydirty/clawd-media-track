@@ -70,6 +70,22 @@ over a massive full-season pack, even if the full-season pack is higher resoluti
 Rationale: Massive packs increase duplication + dedup risk and make it easier to hallucinate coverage.
 Quality upgrades can be handled later after coverage is complete.
 
+### No Black-Box Gambling When Transparent Resources Exist (Hard)
+
+If a candidate resource is **fully transparent** (file size, resolution, audio track, and release group are clearly stated in its title) and it **clearly satisfies the requirement**, you **MUST select it and STOP**. You **MUST NOT** transfer additional opaque or black-box resources "just in case" or "to see what is inside."
+
+**The only valid reason to touch an opaque/black-box resource is when ZERO transparent resources exist.** In that fallback scenario, you may transfer the unclear resource, but you must verify actual coverage after it lands.
+
+Examples of transparent resources:
+- "The.Dark.Knight.2008.2160p.BluRay.FGT.mkv" — 16.68GB (size explicit, release group known)
+- "Transformers.Revenge.of.the.Fallen.2009.1080p.BluRay.x264.TrueHD.7.1.Atmos-SWTYBLZ[20.97GB]" — resolution, audio, size all clear
+
+Examples of opaque/black-box resources:
+- "❤️ 变形金刚2：卷土重来 (2009)" — no size, no resolution, no codec info
+- "【变形金刚系列】【1~5部+大黄蜂】" — vague bundle, unknown contents
+
+If you already have a transparent resource that covers the need, selecting an opaque one alongside it is forbidden.
+
 ### 115 Directory and Scan Safety
 
 Some 115 operations are low-level enough to damage library structure or trigger rate limits if used carelessly.

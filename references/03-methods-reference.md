@@ -247,6 +247,29 @@ Between plan creation and execution:
 - Do NOT call `pansou.search()` again for the same keyword in the same Python session.
 - Runtime guard rejects same-keyword re-search while the plan is still active.
 
+### ⛔ CRITICAL: TransferPlan Cannot Be Pickled Across Sessions
+
+`TransferPlan` and `BoundTransferUrl` objects **cannot be serialized** (pickle/json) and passed between separate `terminal()` calls. `BoundTransferUrl.__new__()` requires keyword-only arguments (`snapshot_id`, `link_index`, `title`, `link_type`) that pickle cannot reconstruct.
+
+**This means the entire search → snapshot → plan → execute chain MUST happen in a single Python session (single `terminal()` call).**
+
+```python
+# ❌ WRONG: Split across sessions (pickle fails)
+# Session 1:
+plan = snapshot.create_transfer_plan([5, 6], keyword="show")
+import pickle; pickle.dump(plan, open('/tmp/plan.pkl', 'wb'))
+# Session 2:
+plan = pickle.load(open('/tmp/plan.pkl', 'rb'))  # TypeError!
+
+# ✅ CORRECT: All in one session
+result = pansou.search("八千里路云和月")
+snapshot = pansou.extract_link_snapshot(result["115"], link_type="115")
+plan = snapshot.create_transfer_plan([5, 6], keyword="八千里路云和月")
+results = pan115.execute_transfer_plan(plan=plan, save_dir_id=save_dir_id)
+```
+
+This is especially relevant for Type 3 cron runs where the agent might try to split evidence gathering (one `terminal()` call) from execution (another call). The two must be combined.
+
 ### Real Example - What Went Wrong
 
 **Target**: "黑暗骑士" (The Dark Knight)

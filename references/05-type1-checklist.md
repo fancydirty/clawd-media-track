@@ -44,6 +44,12 @@ If any item above is violated, stop and report failure instead of continuing.
       └── **Type 2** (Ongoing): Get any resource that covers missing episodes
           └── Coverage > quality for missing episodes
           └── Can upgrade quality later
+  └── **Black-Box Gate (MANDATORY)**:
+      └── If at least one transparent resource clearly matches the target and satisfies the requirement:
+          └── Bind ONLY that transparent resource.
+          └── STOP here — do NOT create additional transfer plans for opaque/black-box links.
+      └── If NO transparent resource exists:
+          └── You may fallback to an opaque resource, but you must verify coverage after transfer.
 
 □ Step 5: Create Media Directory
   └── media_dir = pan115.create_folder(name="名称 (年份)", parent_id=parent_cid)
