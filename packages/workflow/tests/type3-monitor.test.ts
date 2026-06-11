@@ -197,6 +197,54 @@ describe("runType3Monitoring", () => {
 
     await expect(storage.listVideoFiles(season.storageDirectoryId)).resolves.toEqual([]);
   });
+
+  it("rejects stale candidate ids hidden in agent decision mappings", async () => {
+    const { title, season } = qiaochuFixture();
+    const initialEpisodes = createEpisodeStates({
+      trackedSeasonId: season.id,
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.totalEpisodes,
+      latestAiredEpisode: 1,
+    });
+    const storage = new FakeStorageExecutor({
+      directories: { [season.storageDirectoryId]: [] },
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "current candidate should not transfer after invalid mapping",
+          files: [
+            {
+              id: "file_01",
+              storageDirectoryId: season.storageDirectoryId,
+              name: "翘楚.S01E01.mkv",
+              sizeBytes: 1,
+              episodeCode: "S01E01",
+              providerFileId: "provider_01",
+            },
+          ],
+        },
+      },
+    });
+    const resourceProvider = new FakeResourceProvider({
+      keywordResults: {
+        "翘楚 4K": [{ title: "翘楚 S01E01 current", episodeHints: ["S01E01"] }],
+      },
+    });
+
+    await expect(
+      runType3Monitoring({
+        title,
+        season: { ...season, latestAiredEpisode: 1 },
+        episodes: initialEpisodes,
+        keyword: "翘楚 4K",
+        resourceProvider,
+        storage,
+        agents: new StaleMappingAgentNodes(),
+      }),
+    ).rejects.toThrow("Agent decision referenced candidates outside the current resource snapshot");
+
+    await expect(storage.listVideoFiles(season.storageDirectoryId)).resolves.toEqual([]);
+  });
 });
 
 class PrimaryOnlyAgentNodes implements AgentNodes {
@@ -253,6 +301,41 @@ class StaleSnapshotAgentNodes implements AgentNodes {
       rejectedCandidateIds: [],
       confidence: "high",
       reason: "stale decision from a previous search",
+    };
+  }
+}
+
+class StaleMappingAgentNodes implements AgentNodes {
+  async generateKeywords(): Promise<{ keywords: string[]; reason: string }> {
+    return {
+      keywords: [],
+      reason: "not used",
+    };
+  }
+
+  async selectEpisodeCoverage(input: {
+    snapshotId: string;
+    candidates: ResourceCandidate[];
+  }): Promise<AgentDecision> {
+    const current = input.candidates[0];
+    if (!current) {
+      throw new Error("Expected at least one current candidate");
+    }
+
+    return {
+      node: "stale_mapping",
+      snapshotId: input.snapshotId,
+      selectedCandidateIds: [current.id],
+      episodeMapping: {
+        [current.id]: ["S01E01"],
+        snapshot_99_candidate_1: ["S01E01"],
+      },
+      providerAheadEpisodeMapping: {
+        snapshot_99_candidate_1: ["S01E99"],
+      },
+      rejectedCandidateIds: ["snapshot_99_candidate_2"],
+      confidence: "high",
+      reason: "selected current candidate but leaked stale ids in mappings",
     };
   }
 }

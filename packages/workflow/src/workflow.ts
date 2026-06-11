@@ -257,16 +257,27 @@ function addRestoredEpisodes(restored: Set<string>, missingEpisodes: string[], f
 
 function assertDecisionUsesSnapshot(
   decision: AgentDecision,
-  candidates: { id: string }[],
+  candidates: { id: string; snapshotId: string }[],
   snapshotId: string,
 ): void {
   if (decision.snapshotId !== snapshotId) {
     throw new Error("Agent decision referenced a different resource snapshot");
   }
 
+  const candidatesFromOtherSnapshots = candidates.filter((candidate) => candidate.snapshotId !== snapshotId);
+  if (candidatesFromOtherSnapshots.length > 0) {
+    throw new Error("Resource snapshot contained candidates from another snapshot");
+  }
+
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
-  const unknownCandidateIds = decision.selectedCandidateIds.filter((candidateId) => !candidateIds.has(candidateId));
+  const decisionCandidateIds = [
+    ...decision.selectedCandidateIds,
+    ...decision.rejectedCandidateIds,
+    ...Object.keys(decision.episodeMapping),
+    ...Object.keys(decision.providerAheadEpisodeMapping),
+  ];
+  const unknownCandidateIds = decisionCandidateIds.filter((candidateId) => !candidateIds.has(candidateId));
   if (unknownCandidateIds.length > 0) {
-    throw new Error(`Agent decision selected candidates outside the current resource snapshot: ${unknownCandidateIds.join(", ")}`);
+    throw new Error(`Agent decision referenced candidates outside the current resource snapshot: ${unknownCandidateIds.join(", ")}`);
   }
 }
