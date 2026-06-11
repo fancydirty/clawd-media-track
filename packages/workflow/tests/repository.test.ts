@@ -72,6 +72,106 @@ describe("InMemoryWorkflowRepository", () => {
     expect(loaded?.decisions[0]?.selectedCandidateIds).toEqual(["snapshot_1_candidate_1"]);
   });
 
+  it("rejects each invalid reference branch with a clear error", async () => {
+    const cases: Array<{
+      name: string;
+      snapshot: ReturnType<typeof workflowPersistenceFixture>;
+      message: string;
+    }> = [
+      {
+        name: "season title mismatch",
+        snapshot: workflowPersistenceFixture({
+          season: {
+            ...workflowPersistenceFixture().season,
+            mediaTitleId: "other_title",
+          },
+        }),
+        message: "Tracked season does not belong to media title",
+      },
+      {
+        name: "workflow run season mismatch",
+        snapshot: workflowPersistenceFixture({
+          workflowRun: {
+            ...workflowPersistenceFixture().workflowRun,
+            trackedSeasonId: "other_season",
+          },
+        }),
+        message: "Workflow run does not belong to tracked season",
+      },
+      {
+        name: "episode season mismatch",
+        snapshot: workflowPersistenceFixture({
+          episodes: [
+            {
+              ...workflowPersistenceFixture().episodes[0]!,
+              trackedSeasonId: "other_season",
+            },
+          ],
+        }),
+        message: "Episode S01E01 does not belong to tracked season",
+      },
+      {
+        name: "transfer run mismatch",
+        snapshot: workflowPersistenceFixture({
+          transferAttempts: [
+            {
+              ...workflowPersistenceFixture().transferAttempts[0]!,
+              workflowRunId: "other_run",
+            },
+          ],
+        }),
+        message: "Transfer attempt transfer_1 does not belong to workflow run",
+      },
+      {
+        name: "notification run mismatch",
+        snapshot: workflowPersistenceFixture({
+          notifications: [
+            {
+              ...workflowPersistenceFixture().notifications[0]!,
+              workflowRunId: "other_run",
+            },
+          ],
+        }),
+        message: "Notification notification_1 does not belong to workflow run",
+      },
+      {
+        name: "candidate snapshot mismatch",
+        snapshot: workflowPersistenceFixture({
+          resourceSnapshots: [
+            {
+              ...workflowPersistenceFixture().resourceSnapshots[0]!,
+              candidates: [
+                {
+                  ...workflowPersistenceFixture().resourceSnapshots[0]!.candidates[0]!,
+                  snapshotId: "other_snapshot",
+                },
+              ],
+            },
+          ],
+        }),
+        message: "Resource candidate snapshot_1_candidate_1 does not belong to snapshot snapshot_1",
+      },
+      {
+        name: "transfer unknown candidate",
+        snapshot: workflowPersistenceFixture({
+          transferAttempts: [
+            {
+              ...workflowPersistenceFixture().transferAttempts[0]!,
+              candidateId: "snapshot_99_candidate_1",
+            },
+          ],
+        }),
+        message: "Transfer attempt transfer_1 referenced an unknown candidate",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const repository = new InMemoryWorkflowRepository();
+      await expect(repository.saveWorkflowRunSnapshot(testCase.snapshot), testCase.name).rejects.toThrow(testCase.message);
+      await expect(repository.getWorkflowRunSnapshot("run_1")).resolves.toBeNull();
+    }
+  });
+
   it("lists stored episode state for a tracked season", async () => {
     const repository = new InMemoryWorkflowRepository();
     const snapshot = workflowPersistenceFixture();
