@@ -1144,6 +1144,19 @@ to candidates from persisted resource snapshots. A later SQLite or Postgres
 adapter should satisfy the same contract rather than re-implementing workflow
 rules in route handlers or UI components.
 
+The first concrete adapter can be SQLite.
+
+For local development, tests, and a single-machine worker, SQLite is enough to
+prove the schema shape without requiring a running service. The P1 SQLite
+adapter uses the same repository contract and stores normalized entity rows for
+media titles, tracked seasons, workflow runs, episode states, resource
+snapshots, agent decisions, transfer attempts, and notifications. JSON payload
+columns keep the adapter flexible while the workflow model is still settling.
+
+Postgres remains the intended production target. A Postgres adapter should keep
+the same table boundaries and repository contract, then gradually promote JSON
+payload fields into typed columns when query patterns become clear.
+
 Redis can be useful, but it should not become the truth store.
 
 Redis is appropriate for:

@@ -1,0 +1,256 @@
+import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import {
+  episodeNumberFromCode,
+  type AgentDecision,
+  type EpisodeState,
+  type MediaTitle,
+  type NotificationEvent,
+  type ResourceSnapshot,
+  type TrackedSeason,
+  type TransferAttempt,
+  type WorkflowRun,
+} from "./domain.js";
+import {
+  cloneWorkflowValue,
+  type PersistedWorkflowRunSnapshot,
+  type PersistWorkflowRunSnapshotInput,
+  validateWorkflowRunSnapshot,
+  withDerivedEpisodeSummaries,
+  type WorkflowRepository,
+} from "./repository.js";
+
+export function initializeWorkflowSqliteSchema(database: DatabaseSync): void {
+  database.exec(`
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS media_titles (
+      id TEXT PRIMARY KEY,
+      payload TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tracked_seasons (
+      id TEXT PRIMARY KEY,
+      media_title_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (media_title_id) REFERENCES media_titles(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY,
+      tracked_season_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (tracked_season_id) REFERENCES tracked_seasons(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS episode_states (
+      tracked_season_id TEXT NOT NULL,
+      episode_code TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY (tracked_season_id, episode_code),
+      FOREIGN KEY (tracked_season_id) REFERENCES tracked_seasons(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS resource_snapshots (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_decisions (
+      workflow_run_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY (workflow_run_id, ordinal),
+      FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id),
+      FOREIGN KEY (snapshot_id) REFERENCES resource_snapshots(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS transfer_attempts (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      candidate_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
+    );
+  `);
+}
+
+export class SQLiteWorkflowRepository implements WorkflowRepository {
+  constructor(private readonly database: DatabaseSync) {
+    initializeWorkflowSqliteSchema(database);
+  }
+
+  async saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void> {
+    validateWorkflowRunSnapshot(input);
+    const snapshot = cloneWorkflowValue(input);
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.upsertMediaTitle(snapshot.title);
+      this.upsertTrackedSeason(snapshot.season);
+      this.upsertWorkflowRun(snapshot.workflowRun);
+      this.replaceEpisodeStates(snapshot.season.id, snapshot.episodes);
+      this.replaceResourceSnapshots(snapshot.workflowRun.id, snapshot.resourceSnapshots);
+      this.replaceAgentDecisions(snapshot.workflowRun.id, snapshot.decisions);
+      this.replaceTransferAttempts(snapshot.workflowRun.id, snapshot.transferAttempts);
+      this.replaceNotifications(snapshot.workflowRun.id, snapshot.notifications);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null> {
+    const workflowRun = this.selectPayload<WorkflowRun>("SELECT payload FROM workflow_runs WHERE id = ?", workflowRunId);
+    if (!workflowRun) {
+      return null;
+    }
+
+    const season = this.selectPayload<TrackedSeason>(
+      "SELECT payload FROM tracked_seasons WHERE id = ?",
+      workflowRun.trackedSeasonId,
+    );
+    if (!season) {
+      throw new Error(`Missing tracked season ${workflowRun.trackedSeasonId} for workflow run ${workflowRun.id}`);
+    }
+
+    const title = this.selectPayload<MediaTitle>(
+      "SELECT payload FROM media_titles WHERE id = ?",
+      season.mediaTitleId,
+    );
+    if (!title) {
+      throw new Error(`Missing media title ${season.mediaTitleId} for tracked season ${season.id}`);
+    }
+
+    return withDerivedEpisodeSummaries({
+      title,
+      season,
+      workflowRun,
+      episodes: await this.listEpisodeStates(season.id),
+      resourceSnapshots: this.selectPayloads<ResourceSnapshot>(
+        "SELECT payload FROM resource_snapshots WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      decisions: this.selectPayloads<AgentDecision>(
+        "SELECT payload FROM agent_decisions WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      transferAttempts: this.selectPayloads<TransferAttempt>(
+        "SELECT payload FROM transfer_attempts WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      notifications: this.selectPayloads<NotificationEvent>(
+        "SELECT payload FROM notifications WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+    });
+  }
+
+  async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
+    return this.selectPayloads<EpisodeState>(
+      "SELECT payload FROM episode_states WHERE tracked_season_id = ?",
+      trackedSeasonId,
+    ).sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
+  }
+
+  private upsertMediaTitle(title: MediaTitle): void {
+    this.database
+      .prepare("INSERT OR REPLACE INTO media_titles (id, payload) VALUES (?, ?)")
+      .run(title.id, toJson(title));
+  }
+
+  private upsertTrackedSeason(season: TrackedSeason): void {
+    this.database
+      .prepare("INSERT OR REPLACE INTO tracked_seasons (id, media_title_id, payload) VALUES (?, ?, ?)")
+      .run(season.id, season.mediaTitleId, toJson(season));
+  }
+
+  private upsertWorkflowRun(workflowRun: WorkflowRun): void {
+    this.database
+      .prepare("INSERT OR REPLACE INTO workflow_runs (id, tracked_season_id, payload) VALUES (?, ?, ?)")
+      .run(workflowRun.id, workflowRun.trackedSeasonId, toJson(workflowRun));
+  }
+
+  private replaceEpisodeStates(trackedSeasonId: string, episodes: EpisodeState[]): void {
+    this.database.prepare("DELETE FROM episode_states WHERE tracked_season_id = ?").run(trackedSeasonId);
+    const insert = this.database.prepare(
+      "INSERT INTO episode_states (tracked_season_id, episode_code, payload) VALUES (?, ?, ?)",
+    );
+    for (const episode of episodes) {
+      insert.run(trackedSeasonId, episode.episodeCode, toJson(episode));
+    }
+  }
+
+  private replaceResourceSnapshots(workflowRunId: string, snapshots: ResourceSnapshot[]): void {
+    this.database.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
+    const insert = this.database.prepare(
+      "INSERT INTO resource_snapshots (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?)",
+    );
+    snapshots.forEach((snapshot, ordinal) => {
+      insert.run(snapshot.id, workflowRunId, ordinal, toJson(snapshot));
+    });
+  }
+
+  private replaceAgentDecisions(workflowRunId: string, decisions: AgentDecision[]): void {
+    this.database.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
+    const insert = this.database.prepare(
+      "INSERT INTO agent_decisions (workflow_run_id, ordinal, snapshot_id, payload) VALUES (?, ?, ?, ?)",
+    );
+    decisions.forEach((decision, ordinal) => {
+      insert.run(workflowRunId, ordinal, decision.snapshotId, toJson(decision));
+    });
+  }
+
+  private replaceTransferAttempts(workflowRunId: string, attempts: TransferAttempt[]): void {
+    this.database.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
+    const insert = this.database.prepare(
+      "INSERT INTO transfer_attempts (id, workflow_run_id, ordinal, candidate_id, payload) VALUES (?, ?, ?, ?, ?)",
+    );
+    attempts.forEach((attempt, ordinal) => {
+      insert.run(attempt.id, workflowRunId, ordinal, attempt.candidateId, toJson(attempt));
+    });
+  }
+
+  private replaceNotifications(workflowRunId: string, notifications: NotificationEvent[]): void {
+    this.database.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
+    const insert = this.database.prepare(
+      "INSERT INTO notifications (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?)",
+    );
+    notifications.forEach((notification, ordinal) => {
+      insert.run(notification.id, workflowRunId, ordinal, toJson(notification));
+    });
+  }
+
+  private selectPayload<T>(sql: string, ...parameters: string[]): T | null {
+    const row = this.database.prepare(sql).get(...parameters);
+    return row ? parsePayload<T>(row["payload"]) : null;
+  }
+
+  private selectPayloads<T>(sql: string, ...parameters: string[]): T[] {
+    return this.database.prepare(sql).all(...parameters).map((row) => parsePayload<T>(row["payload"]));
+  }
+}
+
+function toJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function parsePayload<T>(payload: SQLOutputValue | undefined): T {
+  if (typeof payload !== "string") {
+    throw new Error("Expected SQLite payload column to be text");
+  }
+  return JSON.parse(payload) as T;
+}

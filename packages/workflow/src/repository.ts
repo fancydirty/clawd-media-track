@@ -38,9 +38,9 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void> {
     validateWorkflowRunSnapshot(input);
 
-    const cloned = clone(input);
+    const cloned = cloneWorkflowValue(input);
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
-    this.episodesBySeason.set(cloned.season.id, clone(cloned.episodes));
+    this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
   }
 
   async getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null> {
@@ -49,15 +49,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       return null;
     }
 
-    return withDerivedEpisodeSummaries(clone(stored));
+    return withDerivedEpisodeSummaries(cloneWorkflowValue(stored));
   }
 
   async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
-    return clone(this.episodesBySeason.get(trackedSeasonId) ?? []);
+    return cloneWorkflowValue(this.episodesBySeason.get(trackedSeasonId) ?? []);
   }
 }
 
-function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): void {
+export function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): void {
   if (input.season.mediaTitleId !== input.title.id) {
     throw new Error("Tracked season does not belong to media title");
   }
@@ -121,7 +121,7 @@ function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): vo
   }
 }
 
-function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInput): PersistedWorkflowRunSnapshot {
+export function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInput): PersistedWorkflowRunSnapshot {
   return {
     ...input,
     obtainedEpisodes: input.episodes
@@ -133,6 +133,6 @@ function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInput): Pe
   };
 }
 
-function clone<T>(value: T): T {
+export function cloneWorkflowValue<T>(value: T): T {
   return structuredClone(value);
 }
