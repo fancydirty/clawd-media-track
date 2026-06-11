@@ -6,7 +6,9 @@ import type {
   ResourceSnapshot,
   TrackedSeason,
   TransferAttempt,
+  WorkflowKind,
   WorkflowRun,
+  WorkflowStatus,
 } from "./domain.js";
 
 export interface PersistWorkflowRunSnapshotInput {
@@ -25,9 +27,32 @@ export interface PersistedWorkflowRunSnapshot extends PersistWorkflowRunSnapshot
   providerAheadEpisodes: string[];
 }
 
+export interface ReserveWorkflowRunInput extends PersistWorkflowRunSnapshotInput {
+  blockIfEpisodeStatesExist?: boolean;
+}
+
+export type WorkflowRunReservationResult =
+  | {
+      status: "reserved";
+      snapshot: PersistedWorkflowRunSnapshot;
+    }
+  | {
+      status: "already_active";
+      snapshot: PersistedWorkflowRunSnapshot;
+    }
+  | {
+      status: "already_has_episode_state";
+      episodes: EpisodeState[];
+    };
+
 export interface WorkflowRepository {
   saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void>;
+  reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult>;
   getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null>;
+  findActiveWorkflowRun(input: {
+    trackedSeasonId: string;
+    kind: WorkflowKind;
+  }): Promise<PersistedWorkflowRunSnapshot | null>;
   listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]>;
 }
 
@@ -43,6 +68,39 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
   }
 
+  async reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult> {
+    const snapshot = workflowSnapshotFromReservation(input);
+    validateWorkflowRunSnapshot(snapshot);
+
+    const activeRun = await this.findActiveWorkflowRun({
+      trackedSeasonId: snapshot.season.id,
+      kind: snapshot.workflowRun.kind,
+    });
+    if (activeRun) {
+      return {
+        status: "already_active",
+        snapshot: activeRun,
+      };
+    }
+
+    const existingEpisodes = this.episodesBySeason.get(snapshot.season.id) ?? [];
+    if (input.blockIfEpisodeStatesExist === true && existingEpisodes.length > 0) {
+      return {
+        status: "already_has_episode_state",
+        episodes: cloneWorkflowValue(existingEpisodes),
+      };
+    }
+
+    const cloned = cloneWorkflowValue(snapshot);
+    this.workflowRuns.set(cloned.workflowRun.id, cloned);
+    this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
+
+    return {
+      status: "reserved",
+      snapshot: withDerivedEpisodeSummaries(cloneWorkflowValue(cloned)),
+    };
+  }
+
   async getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null> {
     const stored = this.workflowRuns.get(workflowRunId);
     if (!stored) {
@@ -50,6 +108,22 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
 
     return withDerivedEpisodeSummaries(cloneWorkflowValue(stored));
+  }
+
+  async findActiveWorkflowRun(input: {
+    trackedSeasonId: string;
+    kind: WorkflowKind;
+  }): Promise<PersistedWorkflowRunSnapshot | null> {
+    const activeRuns = Array.from(this.workflowRuns.values())
+      .filter(
+        (snapshot) =>
+          snapshot.workflowRun.trackedSeasonId === input.trackedSeasonId &&
+          snapshot.workflowRun.kind === input.kind &&
+          isActiveWorkflowStatus(snapshot.workflowRun.status),
+      )
+      .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt));
+    const latest = activeRuns[0];
+    return latest ? withDerivedEpisodeSummaries(cloneWorkflowValue(latest)) : null;
   }
 
   async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
@@ -135,4 +209,13 @@ export function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInp
 
 export function cloneWorkflowValue<T>(value: T): T {
   return structuredClone(value);
+}
+
+export function isActiveWorkflowStatus(status: WorkflowStatus): boolean {
+  return status === "queued" || status === "running";
+}
+
+export function workflowSnapshotFromReservation(input: ReserveWorkflowRunInput): PersistWorkflowRunSnapshotInput {
+  const { blockIfEpisodeStatesExist: _blockIfEpisodeStatesExist, ...snapshot } = input;
+  return snapshot;
 }

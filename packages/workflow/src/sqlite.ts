@@ -8,14 +8,19 @@ import {
   type ResourceSnapshot,
   type TrackedSeason,
   type TransferAttempt,
+  type WorkflowKind,
   type WorkflowRun,
 } from "./domain.js";
 import {
   cloneWorkflowValue,
+  isActiveWorkflowStatus,
   type PersistedWorkflowRunSnapshot,
   type PersistWorkflowRunSnapshotInput,
+  type ReserveWorkflowRunInput,
   validateWorkflowRunSnapshot,
   withDerivedEpisodeSummaries,
+  workflowSnapshotFromReservation,
+  type WorkflowRunReservationResult,
   type WorkflowRepository,
 } from "./repository.js";
 
@@ -98,18 +103,61 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
 
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      this.upsertMediaTitle(snapshot.title);
-      this.upsertTrackedSeason(snapshot.season);
-      this.upsertWorkflowRun(snapshot.workflowRun);
-      this.deleteWorkflowRunChildren(snapshot.workflowRun.id, snapshot.season.id);
-      this.insertEpisodeStates(snapshot.season.id, snapshot.episodes);
-      this.insertResourceSnapshots(snapshot.workflowRun.id, snapshot.resourceSnapshots);
-      this.insertAgentDecisions(snapshot.workflowRun.id, snapshot.decisions);
-      this.insertTransferAttempts(snapshot.workflowRun.id, snapshot.transferAttempts);
-      this.insertNotifications(snapshot.workflowRun.id, snapshot.notifications);
+      this.replaceWorkflowRunSnapshot(snapshot);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult> {
+    const snapshot = cloneWorkflowValue(workflowSnapshotFromReservation(input));
+    validateWorkflowRunSnapshot(snapshot);
+
+    let committed = false;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const activeRun = this.selectWorkflowRuns(snapshot.season.id)
+        .filter(
+          (workflowRun) =>
+            workflowRun.kind === snapshot.workflowRun.kind && isActiveWorkflowStatus(workflowRun.status),
+        )
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+      if (activeRun) {
+        this.database.exec("COMMIT");
+        committed = true;
+        const activeSnapshot = await this.getWorkflowRunSnapshot(activeRun.id);
+        if (!activeSnapshot) {
+          throw new Error(`Missing active workflow run ${activeRun.id}`);
+        }
+        return {
+          status: "already_active",
+          snapshot: activeSnapshot,
+        };
+      }
+
+      const existingEpisodes = this.selectEpisodeStates(snapshot.season.id);
+      if (input.blockIfEpisodeStatesExist === true && existingEpisodes.length > 0) {
+        this.database.exec("COMMIT");
+        committed = true;
+        return {
+          status: "already_has_episode_state",
+          episodes: existingEpisodes,
+        };
+      }
+
+      this.replaceWorkflowRunSnapshot(snapshot);
+      this.database.exec("COMMIT");
+      committed = true;
+      return {
+        status: "reserved",
+        snapshot: withDerivedEpisodeSummaries(cloneWorkflowValue(snapshot)),
+      };
+    } catch (error) {
+      if (!committed) {
+        this.database.exec("ROLLBACK");
+      }
       throw error;
     }
   }
@@ -140,7 +188,7 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
       title,
       season,
       workflowRun,
-      episodes: await this.listEpisodeStates(season.id),
+      episodes: this.selectEpisodeStates(season.id),
       resourceSnapshots: this.selectPayloads<ResourceSnapshot>(
         "SELECT payload FROM resource_snapshots WHERE workflow_run_id = ? ORDER BY ordinal",
         workflowRun.id,
@@ -160,11 +208,22 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     });
   }
 
+  async findActiveWorkflowRun(input: {
+    trackedSeasonId: string;
+    kind: WorkflowKind;
+  }): Promise<PersistedWorkflowRunSnapshot | null> {
+    const workflowRuns = this.selectPayloads<WorkflowRun>(
+      "SELECT payload FROM workflow_runs WHERE tracked_season_id = ?",
+      input.trackedSeasonId,
+    )
+      .filter((workflowRun) => workflowRun.kind === input.kind && isActiveWorkflowStatus(workflowRun.status))
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const latest = workflowRuns[0];
+    return latest ? this.getWorkflowRunSnapshot(latest.id) : null;
+  }
+
   async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
-    return this.selectPayloads<EpisodeState>(
-      "SELECT payload FROM episode_states WHERE tracked_season_id = ?",
-      trackedSeasonId,
-    ).sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
+    return this.selectEpisodeStates(trackedSeasonId);
   }
 
   private upsertMediaTitle(title: MediaTitle): void {
@@ -191,6 +250,18 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     this.database.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
     this.database.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
     this.database.prepare("DELETE FROM episode_states WHERE tracked_season_id = ?").run(trackedSeasonId);
+  }
+
+  private replaceWorkflowRunSnapshot(snapshot: PersistWorkflowRunSnapshotInput): void {
+    this.upsertMediaTitle(snapshot.title);
+    this.upsertTrackedSeason(snapshot.season);
+    this.upsertWorkflowRun(snapshot.workflowRun);
+    this.deleteWorkflowRunChildren(snapshot.workflowRun.id, snapshot.season.id);
+    this.insertEpisodeStates(snapshot.season.id, snapshot.episodes);
+    this.insertResourceSnapshots(snapshot.workflowRun.id, snapshot.resourceSnapshots);
+    this.insertAgentDecisions(snapshot.workflowRun.id, snapshot.decisions);
+    this.insertTransferAttempts(snapshot.workflowRun.id, snapshot.transferAttempts);
+    this.insertNotifications(snapshot.workflowRun.id, snapshot.notifications);
   }
 
   private insertEpisodeStates(trackedSeasonId: string, episodes: EpisodeState[]): void {
@@ -245,6 +316,20 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
 
   private selectPayloads<T>(sql: string, ...parameters: string[]): T[] {
     return this.database.prepare(sql).all(...parameters).map((row) => parsePayload<T>(row["payload"]));
+  }
+
+  private selectWorkflowRuns(trackedSeasonId: string): WorkflowRun[] {
+    return this.selectPayloads<WorkflowRun>(
+      "SELECT payload FROM workflow_runs WHERE tracked_season_id = ?",
+      trackedSeasonId,
+    );
+  }
+
+  private selectEpisodeStates(trackedSeasonId: string): EpisodeState[] {
+    return this.selectPayloads<EpisodeState>(
+      "SELECT payload FROM episode_states WHERE tracked_season_id = ?",
+      trackedSeasonId,
+    ).sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
   }
 }
 

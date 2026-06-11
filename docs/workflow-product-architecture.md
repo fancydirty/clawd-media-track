@@ -493,6 +493,13 @@ The likely specialist nodes are:
 These nodes can be implemented with any structured-output LLM tool.
 They do not require ADK as a dependency.
 
+For the TypeScript product path, the first concrete implementation can use
+Vercel AI SDK as an `AgentNodes` adapter. The model provider should be treated
+as a replaceable implementation detail behind the typed port. For Xiaomi Mimo or
+any other OpenAI-compatible endpoint, configure the provider with a local API
+key, base URL, and model id; the workflow should still validate every structured
+output before side effects.
+
 The important principle is ADK-like:
 
 - deterministic orchestration
@@ -1154,6 +1161,25 @@ contract. This keeps route handlers and future queue jobs from hand-building
 database records differently. It also makes no-op Type 3 runs explicit: when
 storage is already current, the persisted run has no resource snapshots or
 transfer attempts, but still records the verified episode state and notification.
+
+The server command is the UI entrypoint.
+
+When a user clicks "get", the browser should optimistically disable the button,
+but the server must still own the idempotency rule. The command layer should:
+
+- check for an active workflow for the same tracked season and workflow kind
+- return that active workflow instead of starting another one
+- return already-tracked state when episode state already exists
+- reserve a new workflow run before side effects
+- call the runner and return a compact UI summary
+
+This gives the future Next.js route a single safe function to call instead of
+letting route handlers duplicate workflow rules.
+
+The next hardening step is stale-run recovery. If a worker crashes after
+reservation and before marking the run failed or succeeded, the active workflow
+can otherwise block future requests forever. Production storage should add a
+lease, heartbeat, or explicit stale-timeout recovery path.
 
 The first concrete adapter can be SQLite.
 

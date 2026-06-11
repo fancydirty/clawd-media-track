@@ -181,6 +181,142 @@ describe("InMemoryWorkflowRepository", () => {
     await expect(repository.listEpisodeStates("season_1")).resolves.toEqual(snapshot.episodes);
     await expect(repository.listEpisodeStates("missing_season")).resolves.toEqual([]);
   });
+
+  it("finds the latest active workflow run for a tracked season and kind", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const succeeded = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_succeeded",
+        status: "succeeded",
+        startedAt: "2026-06-11T00:00:00.000Z",
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    const oldActive = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_old_active",
+        status: "queued",
+        startedAt: "2026-06-11T00:01:00.000Z",
+        finishedAt: null,
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    const latestActive = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_latest_active",
+        status: "running",
+        startedAt: "2026-06-11T00:02:00.000Z",
+        finishedAt: null,
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+
+    await repository.saveWorkflowRunSnapshot(succeeded);
+    await repository.saveWorkflowRunSnapshot(oldActive);
+    await repository.saveWorkflowRunSnapshot(latestActive);
+
+    const active = await repository.findActiveWorkflowRun({
+      trackedSeasonId: "season_1",
+      kind: "type2_init",
+    });
+    active!.workflowRun.status = "failed";
+
+    const activeAgain = await repository.findActiveWorkflowRun({
+      trackedSeasonId: "season_1",
+      kind: "type2_init",
+    });
+
+    expect(activeAgain?.workflowRun.id).toBe("run_latest_active");
+    expect(activeAgain?.workflowRun.status).toBe("running");
+    await expect(
+      repository.findActiveWorkflowRun({
+        trackedSeasonId: "season_1",
+        kind: "type3_monitor",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("reserves a workflow run only when there is no active run or tracked state", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const active = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_active",
+        status: "running",
+        finishedAt: null,
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    const competing = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_competing",
+        status: "running",
+        finishedAt: null,
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    await repository.saveWorkflowRunSnapshot(active);
+
+    await expect(
+      repository.reserveWorkflowRun({
+        ...competing,
+        blockIfEpisodeStatesExist: true,
+      }),
+    ).resolves.toMatchObject({
+      status: "already_active",
+      snapshot: {
+        workflowRun: { id: "run_active" },
+      },
+    });
+    await expect(repository.getWorkflowRunSnapshot("run_competing")).resolves.toBeNull();
+
+    const trackedRepository = new InMemoryWorkflowRepository();
+    await trackedRepository.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+    const trackedResult = await trackedRepository.reserveWorkflowRun({
+      ...competing,
+      blockIfEpisodeStatesExist: true,
+    });
+    expect(trackedResult.status).toBe("already_has_episode_state");
+    expect(trackedResult.status === "already_has_episode_state" ? trackedResult.episodes[0]?.episodeCode : null).toBe(
+      "S01E01",
+    );
+    await expect(trackedRepository.getWorkflowRunSnapshot("run_competing")).resolves.toBeNull();
+
+    const emptyRepository = new InMemoryWorkflowRepository();
+    await expect(
+      emptyRepository.reserveWorkflowRun({
+        ...competing,
+        blockIfEpisodeStatesExist: true,
+      }),
+    ).resolves.toMatchObject({
+      status: "reserved",
+      snapshot: {
+        workflowRun: { id: "run_competing" },
+      },
+    });
+    await expect(emptyRepository.getWorkflowRunSnapshot("run_competing")).resolves.toMatchObject({
+      workflowRun: { status: "running" },
+    });
+  });
 });
 
 function workflowPersistenceFixture(

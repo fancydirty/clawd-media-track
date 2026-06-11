@@ -1,0 +1,172 @@
+import {
+  createEpisodeStates,
+  type EpisodeState,
+  type MediaTitle,
+  type NotificationEvent,
+  type TrackedSeason,
+  type WorkflowStatus,
+} from "./domain.js";
+import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
+import type { WorkflowRepository } from "./repository.js";
+import { runType2InitializationAndPersist } from "./runner.js";
+
+export type TrackingInitializationRequestStatus = "already_running" | "already_tracked" | "completed";
+
+export interface EpisodeProgressSummary {
+  totalEpisodes: number;
+  latestAiredEpisode: number;
+  obtainedEpisodes: string[];
+  providerAheadEpisodes: string[];
+  missingAiredEpisodes: string[];
+}
+
+export interface TrackingInitializationRequestResult {
+  status: TrackingInitializationRequestStatus;
+  titleId: string;
+  trackedSeasonId: string;
+  workflowRunId: string | null;
+  workflowStatus: WorkflowStatus | null;
+  notification: NotificationEvent | null;
+  progress: EpisodeProgressSummary;
+}
+
+export async function requestTrackingInitialization(input: {
+  title: MediaTitle;
+  season: TrackedSeason;
+  keyword: string;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  agents: AgentNodes;
+  repository: WorkflowRepository;
+  createWorkflowRunId?: () => string;
+  now?: () => string;
+}): Promise<TrackingInitializationRequestResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
+  const startedAt = now();
+  const initialEpisodes = createEpisodeStates({
+    trackedSeasonId: input.season.id,
+    seasonNumber: input.season.seasonNumber,
+    totalEpisodes: input.season.totalEpisodes,
+    latestAiredEpisode: input.season.latestAiredEpisode,
+  });
+
+  const reservation = await input.repository.reserveWorkflowRun({
+    title: input.title,
+    season: input.season,
+    workflowRun: {
+      id: workflowRunId,
+      kind: "type2_init",
+      status: "running",
+      trackedSeasonId: input.season.id,
+      startedAt,
+      finishedAt: null,
+      auditEvents: [
+        {
+          type: "workflow_reserved",
+          message: `Reserved tracking initialization workflow ${workflowRunId}`,
+        },
+      ],
+    },
+    episodes: initialEpisodes,
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    blockIfEpisodeStatesExist: true,
+  });
+  if (reservation.status === "already_active") {
+    return {
+      status: "already_running",
+      titleId: input.title.id,
+      trackedSeasonId: input.season.id,
+      workflowRunId: reservation.snapshot.workflowRun.id,
+      workflowStatus: reservation.snapshot.workflowRun.status,
+      notification: reservation.snapshot.notifications[0] ?? null,
+      progress: summarizeEpisodeProgress(input.season, reservation.snapshot.episodes),
+    };
+  }
+  if (reservation.status === "already_has_episode_state") {
+    return {
+      status: "already_tracked",
+      titleId: input.title.id,
+      trackedSeasonId: input.season.id,
+      workflowRunId: null,
+      workflowStatus: null,
+      notification: null,
+      progress: summarizeEpisodeProgress(input.season, reservation.episodes),
+    };
+  }
+
+  try {
+    const result = await runType2InitializationAndPersist({
+      title: input.title,
+      season: input.season,
+      keyword: input.keyword,
+      resourceProvider: input.resourceProvider,
+      storage: input.storage,
+      agents: input.agents,
+      repository: input.repository,
+      workflowRun: {
+        id: workflowRunId,
+        startedAt,
+        finishedAt: now(),
+      },
+    });
+
+    return {
+      status: "completed",
+      titleId: input.title.id,
+      trackedSeasonId: input.season.id,
+      workflowRunId,
+      workflowStatus: result.status,
+      notification: result.notification,
+      progress: summarizeEpisodeProgress(input.season, result.episodes),
+    };
+  } catch (error) {
+    await input.repository.saveWorkflowRunSnapshot({
+      title: input.title,
+      season: input.season,
+      workflowRun: {
+        id: workflowRunId,
+        kind: "type2_init",
+        status: "failed",
+        trackedSeasonId: input.season.id,
+        startedAt,
+        finishedAt: now(),
+        auditEvents: [
+          {
+            type: "workflow_reserved",
+            message: `Reserved tracking initialization workflow ${workflowRunId}`,
+          },
+          {
+            type: "workflow_failed",
+            message: error instanceof Error ? error.message : "Workflow failed",
+          },
+        ],
+      },
+      episodes: [],
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    throw error;
+  }
+}
+
+function summarizeEpisodeProgress(season: TrackedSeason, episodes: EpisodeState[]): EpisodeProgressSummary {
+  return {
+    totalEpisodes: season.totalEpisodes,
+    latestAiredEpisode: season.latestAiredEpisode,
+    obtainedEpisodes: episodes
+      .filter((episode) => episode.obtained)
+      .map((episode) => episode.episodeCode),
+    providerAheadEpisodes: episodes
+      .filter((episode) => episode.obtained && episode.metadataStatus === "provider_ahead")
+      .map((episode) => episode.episodeCode),
+    missingAiredEpisodes: episodes
+      .filter((episode) => episode.airStatus === "aired" && !episode.obtained)
+      .map((episode) => episode.episodeCode),
+  };
+}
