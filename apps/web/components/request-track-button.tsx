@@ -9,7 +9,7 @@ export function RequestTrackButton() {
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
 
   return (
-    <div>
+    <div className="request-track">
       <button
         className="primary-button"
         type="button"
