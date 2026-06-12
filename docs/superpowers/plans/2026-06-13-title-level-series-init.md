@@ -54,4 +54,4 @@
 - [x] S5 product layer: 获取全剧 queue/worker/web (0b6f93d)
 - [ ] S6 notifications 日报 tab (research linear/changelog patterns first; fix FIXED_CREATED_AT → real now())
 - [x] S7 foreign-work flag (5e401c0)
-- [ ] S8 live validation (find airing US multi-season show via PanSou; The Boys S5 tmdb 76479 first guess)
+- [x] S8 live validation PASSED: The Boys tmdb 76479, 774s, 5 seasons 40/40 obtained; agent composed S1-4 pack (208G) + S5 complete pack from 12-keyword search; live dedup (run-1 duplicates) agent-confirmed and verified; snapshot content-hash dedupe fix required (committed). Future polish noted: series-init/Type2 could reconcile existing season-dir content BEFORE acquisition (idempotent re-init without duplicate transfers).
