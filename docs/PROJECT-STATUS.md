@@ -137,20 +137,48 @@ curl -X POST localhost:3000/api/workflows/run-next         # 跑队列（dev）
     unparsedFiles（无集数标识视频）/ packageTrees（staging 树）三层；moveFiles 三层都搬，
     renameFile 解析新名后在 unparsed↔verified 间晋升。写测试先想清文件该放哪层。
 
+## 2026-06-13 第三轮：前端 IA 重构 + TMDB + 推送 + 扫码（f8f6b20..7b33e12）
+
+计划文档：`docs/superpowers/plans/2026-06-13-frontend-ia-tmdb-push-qrlogin.md`（S1-S7 全完成）。
+调研：`docs/research/2026-06-13-overseerr-ia-patterns.md`（源码级，驱动页面结构）。
+
+1. **标题级 IA**（f8f6b20）：媒体库 = 海报墙（右上 mini 状态徽章 绿✓全入库/靛·追更/琥珀·缺集）；
+   `/show/[tmdbId]` 单一规范标题页（backdrop hero + 海报 + 聚合徽章 + overview + 季行内列表：
+   per-季徽章/进度/已追踪季 `<details>` 展开集 chips/未追踪季"获取本季"按钮 + 顶部"获取全剧/剩余"）；
+   旧 per-季路由 redirect；搜索结果带真海报 + "已在库"徽章，与库页汇聚同一标题页。
+   **获取剩余** = series init 只传未追踪季数组（锁自然挂数组首季；reconcile 保证重叠无害）。
+   MediaTitle 持久化 posterPath/backdropPath/overview（JSON payload 免迁移）；旧标题海报
+   经 6h 缓存的 series-target 懒补。next.config 加载仓库根 .env；`MEDIA_TRACK_SEARCH_PROVIDER=tmdb`
+   已开，搜索/标题页/海报墙全部 live 实测通过（黑袍/V世代/恶魔）。
+2. **推送渠道**（a8ebd81）：notify.ts NotifyChannel + Bark/Server酱Turbo/企微机器人/通用 webhook
+   四 adapter（fetch 注入可测）；env `MEDIA_TRACK_PUSH_BARK_KEY/_SERVERCHAN_SENDKEY/
+   _WECOM_WEBHOOK/_WEBHOOK_URL`；worker 入口跑完按时间水位推送本次新通知，失败只记日志。
+3. **115 扫码登录**（7b33e12）：Pan115QrLoginClient 三步流（默认 alipaymini，长轮询缺 status=等待）；
+   repository 加 getSetting/setSetting（sqlite app_settings 表）；扫码确认后 cookie+meta 落库并
+   立即生效（执行器每次从 process.env 现建），worker 入口 hydrate（DB 赢过 .env 兜底）；
+   `/settings` 页（状态徽章 + 客户端类型下拉 + 官方 QR PNG 代理）+ `/api/115/qrcode{,/status,/confirm,/image}`；
+   侧边栏健康卡链接 /settings。Live 实测到真实二维码渲染+轮询；**手机扫码确认一步待用户验收**。
+
+新增踩坑教训：
+11. **管道吞 exit code**：`npm test | tail` 的退出码是 tail 的——提交前用
+    `npm test > /dev/null && echo GREEN` 之类确认真实状态（这轮曾因此带挂测试提交过一次）。
+12. Next 只自动加载 app 目录 .env；本仓配置全在根 .env，由 next.config.ts 启动时注入
+    （`??=` 不覆盖已有 env）。
+
 ## 待办（按价值排序）
 
-1. **通知投递渠道**：调研报告见 `docs/research/`（如已生成）；多渠道用户自选，
-   以"终端用户配置步骤最少"为第一标准（Bark/Server酱/ntfy/企业微信 bot 等候选）。
-   选型需用户拍板后实现。
-2. **115 连接流程产品化**：web 原生扫码（qrcodeapi.115.com 三步流：token→轮询→换 cookie），
-   调研报告见 `docs/research/`（如已生成）；客户端类型选 alipaymini/tv 类长效 cookie，
-   注意同类型登录互踢。实现后替代 .env 手填。
+1. **115 扫码全链验收**：用户手机扫 /settings 二维码确认 → cookie 入库 → 跑一次 worker
+   验证 DB cookie 生效。注意风控：不要反复重登（锁到次日零点）。
+2. **推送渠道配置**：.env 填 `MEDIA_TRACK_PUSH_BARK_KEY` 等任一渠道后即生效；
+   日报式 digest 汇总（现在是逐条推）可后续优化。
 3. 杂项：staging 空目录清理策略；Postgres 迁移（远期，repository 合同已就位；本机 OrbStack
    可用，已有 postgres:17-alpine 镜像）；多语言关键词策略持续打磨；
-   `.claude/launch.json` 已配 preview dev server（live series DB + 关 demo seed）。
+   `.claude/launch.json` 已配 preview dev server（live series DB + 关 demo seed）；
+   电影类内容的搜索/获取（现在 hub/wall 只做 tv）。
 
 ## Git 状态
 
-分支 `codex/workflow-kernel-p0`（master 未合并）。06-12 两大弧线 ~35 commits：
+分支 `codex/workflow-kernel-p0`（master 未合并）。弧线：
 planning-agent 重构（7dfe4b0..0528da3）→ 生产化三件套+前端（49508bd..a05ac6d）→
-标题级系列初始化 S1-S8（0ab9283..d3965ce）→ 第二轮清待办（d49f3c9..e7bda59）。工作树干净。
+标题级系列初始化 S1-S8（0ab9283..d3965ce）→ 第二轮清待办（d49f3c9..e7bda59）→
+第三轮 IA/TMDB/推送/扫码（f8f6b20..7b33e12）。工作树干净。
