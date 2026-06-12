@@ -53,5 +53,5 @@
 - [x] S4 runSeriesInitialization (7e36236)
 - [x] S5 product layer: 获取全剧 queue/worker/web (0b6f93d)
 - [ ] S6 notifications 日报 tab (research linear/changelog patterns first; fix FIXED_CREATED_AT → real now())
-- [ ] S7 foreign-work flag
+- [x] S7 foreign-work flag (5e401c0)
 - [ ] S8 live validation (find airing US multi-season show via PanSou; The Boys S5 tmdb 76479 first guess)
