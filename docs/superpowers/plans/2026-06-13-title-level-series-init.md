@@ -47,4 +47,11 @@
 - Verify: per-season dirs, ongoing season active + Type 3 sweep picks it up, notifications feed shows the run.
 
 ## Status log (update as phases complete)
-- [ ] S1 ... [ ] S8
+- [x] S1 find-or-create dirs + fake coherence
+- [x] S2 multi-season planning contract (0ab9283)
+- [x] S3 staging-unified acquisition (ff5af21)
+- [x] S4 runSeriesInitialization (7e36236)
+- [x] S5 product layer: 获取全剧 queue/worker/web (0b6f93d)
+- [ ] S6 notifications 日报 tab (research linear/changelog patterns first; fix FIXED_CREATED_AT → real now())
+- [ ] S7 foreign-work flag
+- [ ] S8 live validation (find airing US multi-season show via PanSou; The Boys S5 tmdb 76479 first guess)
