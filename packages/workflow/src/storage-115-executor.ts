@@ -289,6 +289,18 @@ export class Storage115Executor implements StorageExecutor {
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = await this.assertWithinWriteScope(input.parentId, "create directory");
+    // Find-or-create: seasons of one title initialize at different times and
+    // must land under the SAME show directory; 115 happily creates duplicate
+    // same-name folders otherwise.
+    const items = await this.callApi("listItems", () => this.api.listItems({ directoryId: safeParentId }));
+    for (const item of items) {
+      if (isDirectory(item) && itemName(item) === input.name) {
+        const existingId = directoryIdFromItem(item);
+        if (existingId) {
+          return existingId;
+        }
+      }
+    }
     return this.callApi("createFolder", () => this.api.createFolder({ ...input, parentId: safeParentId }));
   }
 

@@ -416,3 +416,46 @@ describe("FakeStorageExecutor package trees", () => {
     expect(remaining.map((file) => file.providerFileId)).toEqual(["f3"]);
   });
 });
+
+describe("directory find-or-create and storage coherence", () => {
+  it("reuses an existing same-name directory instead of duplicating it", async () => {
+    const storage = new FakeStorageExecutor();
+    const first = await storage.createDirectory({ name: "绝命毒师 (2008)", parentId: "root" });
+    const second = await storage.createDirectory({ name: "绝命毒师 (2008)", parentId: "root" });
+    expect(second).toBe(first);
+    const other = await storage.createDirectory({ name: "绝命毒师 (2008)", parentId: "other_root" });
+    expect(other).not.toBe(first);
+  });
+
+  it("lists transferred files in the tree and moves them between directories", async () => {
+    const storage = new FakeStorageExecutor({
+      transferOutcomes: {
+        cand_1: {
+          status: "succeeded",
+          providerMessage: "",
+          files: [
+            {
+              id: "f1",
+              storageDirectoryId: "any",
+              name: "Show.S01E01.mkv",
+              sizeBytes: 1_000,
+              episodeCode: "S01E01",
+              providerFileId: "f1",
+            },
+          ],
+        },
+      },
+    });
+    const staging = await storage.createDirectory({ name: "staging-1", parentId: "root" });
+    await storage.transfer({ workflowRunId: "r", directoryId: staging, candidate: candidateFixture("cand_1") });
+
+    const tree = await storage.listTree({ directoryId: staging });
+    expect(tree).toEqual([{ path: "Show.S01E01.mkv", providerFileId: "f1", sizeBytes: 1_000 }]);
+
+    const seasonDir = await storage.createDirectory({ name: "Season 1", parentId: "show" });
+    await storage.moveFiles({ fileIds: ["f1"], targetDirectoryId: seasonDir });
+    expect(await storage.listVideoFiles(seasonDir)).toHaveLength(1);
+    expect(await storage.listTree({ directoryId: staging })).toEqual([]);
+    expect(await storage.listVideoFiles(staging)).toEqual([]);
+  });
+});

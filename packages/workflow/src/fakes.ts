@@ -113,10 +113,18 @@ export class FakeStorageExecutor implements StorageExecutor {
     this.nestedDirectories = new Set(input.nestedDirectories ?? []);
   }
 
+  private readonly directoryIdsByName = new Map<string, string>();
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
+    const nameKey = `${input.parentId}::${input.name}`;
+    const existing = this.directoryIdsByName.get(nameKey);
+    if (existing !== undefined) {
+      return existing;
+    }
     const directoryId = `${input.parentId}_${input.name}_${this.nextDirectoryNumber}`;
     this.nextDirectoryNumber += 1;
     this.directories.set(directoryId, []);
+    this.directoryIdsByName.set(nameKey, directoryId);
     return directoryId;
   }
 
@@ -176,14 +184,38 @@ export class FakeStorageExecutor implements StorageExecutor {
   }
 
   async listTree(input: { directoryId: string; maxDepth?: number }): Promise<PackageTreeFile[]> {
-    return (this.packageTrees.get(input.directoryId) ?? []).map(
+    const configured = (this.packageTrees.get(input.directoryId) ?? []).map(
       ({ episodeCode: _episodeCode, ...file }) => ({ ...file }),
     );
+    const transferred = (this.directories.get(input.directoryId) ?? []).map((file) => ({
+      path: file.name,
+      providerFileId: file.id,
+      sizeBytes: file.sizeBytes,
+    }));
+    return [...configured, ...transferred];
   }
 
   async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
     const wanted = new Set(input.fileIds);
     const moved: string[] = [];
+    for (const [directoryId, files] of this.directories) {
+      if (directoryId === input.targetDirectoryId) {
+        continue;
+      }
+      const moving = files.filter((file) => wanted.has(file.id));
+      if (moving.length === 0) {
+        continue;
+      }
+      this.directories.set(
+        directoryId,
+        files.filter((file) => !wanted.has(file.id)),
+      );
+      const target = this.filesFor(input.targetDirectoryId);
+      for (const file of moving) {
+        target.push({ ...file, storageDirectoryId: input.targetDirectoryId });
+        moved.push(file.id);
+      }
+    }
     for (const [stagingId, treeFiles] of this.packageTrees) {
       const keep: FakePackageTreeFile[] = [];
       for (const treeFile of treeFiles) {
