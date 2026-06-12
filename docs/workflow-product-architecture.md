@@ -505,17 +505,38 @@ fragile, memory-heavy agent execution.
 
 ## Specialist Nodes
 
-The likely specialist nodes are:
+An earlier draft of this document split acquisition judgment into many serial
+specialist nodes (KeywordAgent → CandidateMatchAgent → EpisodeCoverageAgent →
+QualitySelectionAgent). Implementation experience showed that fragmentation
+was wrong: search strategy, target matching, episode mapping, transparency,
+and quality tradeoffs are interlocking constraints over one evidence window.
+Splitting them into sequential filters loses information between stages and
+invites mechanical glue logic to fill the gaps — exactly the Sonarr-shaped
+failure this product must avoid.
+
+The current node set (2026-06-12):
 
 | Node | Responsibility | Should See |
 | --- | --- | --- |
-| `KeywordAgent` | Generate search keyword candidates | TMDB metadata, title aliases, season, media type |
-| `CandidateMatchAgent` | Decide whether candidate titles refer to the target | target metadata, candidate titles, source/type |
-| `EpisodeCoverageAgent` | Map candidate resources to episodes | missing episodes, candidate titles, season info |
-| `QualitySelectionAgent` | Choose among valid covering resources | title evidence, size hints, quality preference |
-| `DedupAgent` | Decide which duplicate files to keep | verified 115 file list, sizes, episode mapping |
-| `FailureExplainAgent` | Convert failure state into user-facing explanation | workflow state, attempts, missing resources |
-| `NotificationAgent` | Write notification text | verified outcome, remaining missing episodes |
+| `AcquisitionPlanningAgent` | The whole acquisition deliberation: keyword strategy, target matching, episode mapping, selection, uncertainty | target metadata, quality preference, missing episodes, failure evidence, full snapshots via a read-only `searchResources` tool |
+| `PackageRecognitionAgent` | Map ambiguous package files to season/episode | package file tree, parser evidence |
+| `DedupAgent` (follow-up) | Map verified files to episodes semantically; keep-larger policy stays deterministic | verified 115 file list, sizes |
+| `FailureExplainAgent` (future) | Convert failure state into user-facing explanation | workflow state, attempts, missing resources |
+| `NotificationAgent` (future) | Write notification text | verified outcome, remaining missing episodes |
+
+The planning agent is powerful inside its lane but its output passes a hard
+contract before any side effect: the selected snapshot must have been
+observed in this run; every candidate in it must receive exactly one
+disposition (selected / rejected / uncertain) — the structured equivalent of
+the skill's full-traversal rule; every selected candidate must map to at
+least one actionable missing episode (the "no just-in-case" rule as code);
+and a "no coverage found" plan is a legitimate honest outcome that becomes a
+`no_coverage` workflow state, not an error.
+
+Recovery is agent-driven: when a transfer materializes nothing, the workflow
+records failure evidence and re-invokes the planning agent (bounded passes,
+default 2). Workflow code never selects candidates by hints, order, or
+pattern matching.
 
 These nodes can be implemented with any structured-output LLM tool.
 They do not require ADK as a dependency.

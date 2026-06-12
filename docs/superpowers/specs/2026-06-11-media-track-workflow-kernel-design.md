@@ -373,65 +373,84 @@ P0 should include scenarios for:
 
 ## Agent Node Contracts
 
-P0 uses deterministic fake agents, not live LLM calls. The contracts should be
-the same shape a real structured-output model will later use.
+The kernel uses deterministic fake agents in tests; the live adapter uses the
+same contracts through structured output.
 
-### `KeywordAgent`
+The original P0 design split acquisition judgment into serial specialist
+filters (keyword → discovery → candidate match → episode coverage). That
+fragmentation was revised on 2026-06-12: search strategy, target matching,
+episode mapping, and selection are interlocking constraints over one evidence
+window, so they belong to one deliberation. The skill's defensive rules now
+split three ways:
 
-Input:
+1. dissolved by architecture: step order, evidence gathering, transfer
+   binding, and verification are workflow code; no prompt needed
+2. boundary validators: structural rules enforced on the model output
+3. prompt-owned semantics: the irreducible judgment the model is for
 
-- media title
-- aliases
-- season number
-- missing episodes
-- previous provider errors
+### `AcquisitionPlanningAgent`
 
-Output:
+The single acquisition judgment node. A tool-loop agent with one read-only
+tool, `searchResources(keyword)`, which returns the full persisted
+`ResourceSnapshot` so the model always judges complete evidence.
 
-- ordered keyword candidates
-- reason
+Input packet:
 
-### `CandidateMatchAgent`
-
-Input:
-
-- media title
-- aliases
-- candidate titles
-
-Output:
-
-- matched candidate ids
-- rejected candidate ids
-- uncertainty list
-
-### `EpisodeCoverageAgent`
-
-Input:
-
-- missing episodes
+- media title, aliases, season number, quality preference
+- actionable missing episodes
 - latest aired episode cursor
-- matched candidates
+- initial keyword
+- failure evidence from prior passes (failed candidate ids/titles, transfer
+  status, provider message, episodes still missing)
 
-Output:
+Output (`AcquisitionPlan`):
 
-- selected candidate ids
-- episode mapping
-- provider-ahead episode mapping
-- coverage gaps
-- confidence
+- selected snapshot id (nullable; null means "no coverage found" and is an
+  honest, first-class outcome)
+- searched keywords
+- one disposition (`selected | rejected | uncertain`) for EVERY candidate in
+  the selected snapshot, with covered episode codes and a reason per
+  candidate
+- confidence and overall reason
 
-### `DedupAgent`
+Validators (`validateAcquisitionPlan`, enforced before any side effect):
 
-Input:
+- the selected snapshot must have been observed via the tool in this run
+- disposition totality: every candidate in the selected snapshot must be
+  accounted for exactly once (the structured-output equivalent of the
+  skill's full-traversal rule)
+- every selected candidate must map to at least one actionable missing
+  episode (the "no just-in-case transfers" rule as code)
+- episode codes must belong to the tracked season
+- a no-coverage plan must not contain selected dispositions
 
-- verified file snapshot
+Prompt-owned semantics (system prompt, not validators):
 
-Output:
+- wrong-target rejection, season strictness for season 2+
+- episode-range honesty ("更新至03集" does not cover E04)
+- transparency gate (opaque bundles only when nothing transparent covers)
+- low-overlap preference with justified tradeoffs for big packs
+- keyword recovery strategy across provider errors and noise
 
-- duplicate groups
-- candidate delete ids
-- reason
+### Failure-evidence loop
+
+The workflow runs up to `maxPlanningPasses` (default 2) planning passes. A
+transfer that materializes nothing is recorded as failure evidence and fed to
+the next planning pass; the workflow never mechanically iterates provider
+candidates. "No coverage" is only accepted as a conclusion when the agent saw
+real provider evidence; if searches errored and successful ones were all
+empty, the run fails as an infrastructure error to retry later.
+
+### `PackageRecognitionAgent`
+
+Unchanged: maps ambiguous package files to season/episode numbers for the
+package normalizer.
+
+### `DedupAgent` (follow-up)
+
+Planned but not yet implemented: the agent maps verified files to episodes
+semantically; the keep-larger policy, preview, and deletion stay
+deterministic.
 
 ## Invariants
 
