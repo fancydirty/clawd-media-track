@@ -165,6 +165,11 @@ curl -X POST localhost:3000/api/workflows/run-next         # 跑队列（dev）
 12. Next 只自动加载 app 目录 .env；本仓配置全在根 .env，由 next.config.ts 启动时注入
     （`??=` 不覆盖已有 env）。
 
+4. **搜索语义打磨**（4f377dc，用户走查反馈）：卡片动作状态驱动——已库"查看详情"/
+   未追踪单季"获取"/未追踪多季"获取所有季"+选季下拉（"获取全剧"措辞废弃）；meta 干掉集数与
+   TMDB id，改"共 N 季"+具体入库情况（全 N 季已获取 / 第 X、Y 季已获取 / 第 Z 季追更中）；
+   标题页侧边栏不再假装在媒体库（active=none），返回控件 history-aware；单季剧隐藏顶部主按钮。
+
 ## 待办（按价值排序）
 
 1. **115 扫码全链验收**：用户手机扫 /settings 二维码确认 → cookie 入库 → 跑一次 worker
