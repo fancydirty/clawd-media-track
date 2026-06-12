@@ -590,3 +590,31 @@ function workflowPersistenceFixture(
     ...overrides,
   };
 }
+
+describe("listNotifications", () => {
+  it("returns notifications across runs, newest first", async () => {
+    const { InMemoryWorkflowRepository } = await import("../src/index.js");
+    const repository = new InMemoryWorkflowRepository();
+    const base = workflowPersistenceFixture();
+    await repository.saveWorkflowRunSnapshot({
+      ...base,
+      notifications: [
+        { id: "n1", workflowRunId: base.workflowRun.id, kind: "tracking_initialized", title: "A", body: "a", createdAt: "2026-06-12T08:00:00.000Z" },
+      ],
+    });
+    const second = workflowPersistenceFixture();
+    second.workflowRun = { ...second.workflowRun, id: "run_2", trackedSeasonId: "season_2" };
+    second.season = { ...second.season, id: "season_2" };
+    second.episodes = second.episodes.map((episode) => ({ ...episode, trackedSeasonId: "season_2" }));
+    second.transferAttempts = second.transferAttempts.map((attempt) => ({ ...attempt, workflowRunId: "run_2" }));
+    await repository.saveWorkflowRunSnapshot({
+      ...second,
+      notifications: [
+        { id: "n2", workflowRunId: "run_2", kind: "episodes_restored", title: "B", body: "b", createdAt: "2026-06-13T08:00:00.000Z" },
+      ],
+    });
+
+    const feed = await repository.listNotifications();
+    expect(feed.map((notification) => notification.id)).toEqual(["n2", "n1"]);
+  });
+});

@@ -311,6 +311,15 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
     return this.selectEpisodeStates(trackedSeasonId);
   }
 
+  async listNotifications(input?: { limit?: number }): Promise<NotificationEvent[]> {
+    const rows = this.database
+      .prepare("SELECT payload FROM notifications")
+      .all() as Array<{ payload: string }>;
+    const all = rows.map((row) => JSON.parse(row.payload) as NotificationEvent);
+    all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return all.slice(0, input?.limit ?? 100);
+  }
+
   private upsertMediaTitle(title: MediaTitle): void {
     this.database
       .prepare("INSERT OR REPLACE INTO media_titles (id, payload) VALUES (?, ?)")

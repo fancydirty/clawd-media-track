@@ -68,6 +68,8 @@ export interface WorkflowRepository {
   getTrackedSeasonState(trackedSeasonId: string): Promise<TrackedSeasonState | null>;
   listTrackedSeasonStates(): Promise<TrackedSeasonState[]>;
   listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]>;
+  /** Most-recent-first notification feed across all workflow runs. */
+  listNotifications(input?: { limit?: number }): Promise<NotificationEvent[]>;
 }
 
 export class InMemoryWorkflowRepository implements WorkflowRepository {
@@ -200,6 +202,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
     return cloneWorkflowValue(this.episodesBySeason.get(trackedSeasonId) ?? []);
+  }
+
+  async listNotifications(input?: { limit?: number }): Promise<NotificationEvent[]> {
+    const all = [...this.workflowRuns.values()].flatMap((snapshot) =>
+      snapshot.notifications.map((notification) => ({ ...notification })),
+    );
+    all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return all.slice(0, input?.limit ?? 100);
   }
 
   private expireStaleActiveWorkflowRuns(input: ReserveWorkflowRunInput): void {

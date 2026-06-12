@@ -32,8 +32,11 @@ import type {
 
 const TYPE2_WORKFLOW_RUN_ID = "run_type2";
 const TYPE3_WORKFLOW_RUN_ID = "run_type3";
-const FIXED_CREATED_AT = "2026-01-01T00:00:00.000Z";
 const DEFAULT_MAX_PLANNING_PASSES = 2;
+
+function defaultNowIso(): string {
+  return new Date().toISOString();
+}
 
 export interface WorkflowResult {
   status: WorkflowStatus;
@@ -60,8 +63,10 @@ export async function runType2Initialization(input: {
   workflowRunId?: string;
   maxPlanningPasses?: number;
   storageParentDirectoryId?: string;
+  now?: () => string;
 }): Promise<WorkflowResult> {
   const workflowRunId = input.workflowRunId ?? TYPE2_WORKFLOW_RUN_ID;
+  const now = input.now ?? defaultNowIso;
   const auditEvents: AuditEvent[] = [];
   const landing = await ensureLandingDirectory({
     title: input.title,
@@ -138,7 +143,7 @@ export async function runType2Initialization(input: {
           kind: "no_coverage",
           title: `${input.title.title} no covering resource yet`,
           body: `no covering resource found yet; ${obtainedEpisodes.length} episodes obtained`,
-          createdAt: FIXED_CREATED_AT,
+          createdAt: now(),
         }
       : {
           id: `notification_${workflowRunId}`,
@@ -146,7 +151,7 @@ export async function runType2Initialization(input: {
           kind: "tracking_initialized",
           title: `${input.title.title} tracking initialized`,
           body: `${obtainedEpisodes.length} episodes obtained`,
-          createdAt: FIXED_CREATED_AT,
+          createdAt: now(),
         };
 
   return {
@@ -212,8 +217,10 @@ export async function runType3Monitoring(input: {
   workflowRunId?: string;
   maxPlanningPasses?: number;
   storageParentDirectoryId?: string;
+  now?: () => string;
 }): Promise<WorkflowResult> {
   const workflowRunId = input.workflowRunId ?? TYPE3_WORKFLOW_RUN_ID;
+  const now = input.now ?? defaultNowIso;
   if (input.season.storageDirectoryId === "") {
     throw new Error(
       "MEDIA_TRACK_TRACKING_NOT_INITIALIZED: tracked season has no storage directory; run Type 2 initialization first",
@@ -242,7 +249,7 @@ export async function runType3Monitoring(input: {
       kind: "already_current",
       title: `${input.title.title} already current`,
       body: "0 episodes restored",
-      createdAt: FIXED_CREATED_AT,
+      createdAt: now(),
     };
     return {
       status: "succeeded",
@@ -321,7 +328,7 @@ export async function runType3Monitoring(input: {
           kind: "no_coverage",
           title: `${input.title.title} no covering resource yet`,
           body: `no covering resource found yet; ${restoredCount} episodes restored`,
-          createdAt: FIXED_CREATED_AT,
+          createdAt: now(),
         }
       : {
           id: `notification_${workflowRunId}`,
@@ -329,7 +336,7 @@ export async function runType3Monitoring(input: {
           kind: "episodes_restored",
           title: `${input.title.title} episodes restored`,
           body: `${restoredCount} episodes restored`,
-          createdAt: FIXED_CREATED_AT,
+          createdAt: now(),
         };
 
   return {
@@ -386,8 +393,10 @@ export async function runSeriesInitialization(input: {
   qualityPreference?: string;
   workflowRunId?: string;
   maxPlanningPasses?: number;
+  now?: () => string;
 }): Promise<SeriesInitializationResult> {
   const workflowRunId = input.workflowRunId ?? "run_series_init";
+  const now = input.now ?? defaultNowIso;
   const qualityPreference = input.qualityPreference ?? "4K";
   const auditEvents: AuditEvent[] = [];
 
@@ -497,7 +506,7 @@ export async function runSeriesInitialization(input: {
         ? `${input.title.title} no covering resource yet`
         : `${input.title.title} series initialized`,
     body: `${totalObtained} episodes obtained across ${seasonResults.length} seasons`,
-    createdAt: FIXED_CREATED_AT,
+    createdAt: now(),
   };
 
   return {
