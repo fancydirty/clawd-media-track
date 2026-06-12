@@ -7,7 +7,6 @@ import {
   reconcileVerifiedFiles,
   runType3Monitoring,
   type AgentDecision,
-  type AgentNodes,
   type MediaTitle,
   type PackageRecognitionDecision,
   type ResourceCandidate,
@@ -429,7 +428,7 @@ describe("runType3Monitoring", () => {
   });
 });
 
-class AgentSelectedFallbackNodes implements AgentNodes {
+class AgentSelectedFallbackNodes extends FakeAgentNodes {
   async generateKeywords(): Promise<{ keywords: string[]; reason: string }> {
     return {
       keywords: [],
@@ -480,7 +479,7 @@ class AgentSelectedFallbackNodes implements AgentNodes {
   }
 }
 
-class PrimaryOnlyAgentNodes implements AgentNodes {
+class PrimaryOnlyAgentNodes extends FakeAgentNodes {
   async generateKeywords(): Promise<{ keywords: string[]; reason: string }> {
     return {
       keywords: [],
@@ -527,7 +526,7 @@ class PrimaryOnlyAgentNodes implements AgentNodes {
   }
 }
 
-class StaleSnapshotAgentNodes implements AgentNodes {
+class StaleSnapshotAgentNodes extends FakeAgentNodes {
   async generateKeywords(): Promise<{ keywords: string[]; reason: string }> {
     return {
       keywords: [],
@@ -564,7 +563,7 @@ class StaleSnapshotAgentNodes implements AgentNodes {
   }
 }
 
-class StaleMappingAgentNodes implements AgentNodes {
+class StaleMappingAgentNodes extends FakeAgentNodes {
   async generateKeywords(): Promise<{ keywords: string[]; reason: string }> {
     return {
       keywords: [],

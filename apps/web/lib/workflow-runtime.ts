@@ -7,13 +7,13 @@ import {
   FakeAgentNodes,
   FakeResourceProvider,
   FakeStorageExecutor,
+  createXiaomiMimoAgentNodesFromEnv,
   getTrackedSeasonStatusView,
   assertWorkflowAgentAdapterPolicy,
   prepareTrackingTarget,
   queueTrackingInitialization,
   runQueuedType2Workflow,
   SQLiteWorkflowRepository,
-  VercelAiAgentNodes,
   type AgentNodes,
   type MediaSearchCandidate,
   type MediaTitle,
@@ -244,7 +244,7 @@ function getAgentNodes(): AgentNodes {
   }
   agentNodes = {
     adapter,
-    nodes: adapter === "vercel-ai" ? new VercelAiAgentNodes() : new FakeAgentNodes(),
+    nodes: adapter === "vercel-ai" ? createXiaomiMimoAgentNodesFromEnv(process.env) : new FakeAgentNodes(),
   };
   return agentNodes.nodes;
 }

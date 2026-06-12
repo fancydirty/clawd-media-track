@@ -11,7 +11,13 @@ import type {
   PackageRecognitionDecision,
   PackageRecognitionInput,
 } from "./package-normalizer.js";
-import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
+import type {
+  AgentNodes,
+  ResourceDiscoveryInput,
+  ResourceDiscoveryResult,
+  ResourceProvider,
+  StorageExecutor,
+} from "./ports.js";
 
 const FIXED_CREATED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -192,6 +198,117 @@ export class FakeAgentNodes implements AgentNodes {
     };
   }
 
+  async discoverResources(input: ResourceDiscoveryInput): Promise<ResourceDiscoveryResult> {
+    const keywordPlan = await this.generateKeywords({
+      title: input.title,
+      aliases: input.aliases,
+      missingEpisodes: input.missingEpisodes,
+      previousErrors: [],
+    });
+    const snapshots: ResourceSnapshot[] = [];
+    const searchedKeywords: string[] = [];
+    const rejectedSnapshotIds: string[] = [];
+    const trace: ResourceDiscoveryResult["trace"] = [
+      {
+        type: "node_start",
+        nodeName: "ResourceDiscoveryAgent",
+        schemaName: "resource_discovery",
+        maxSteps: 6,
+      },
+    ];
+    let lastEmptySnapshot: ResourceSnapshot | null = null;
+    let lastError: unknown = null;
+
+    for (const keyword of uniqueKeywords([input.initialKeyword, ...keywordPlan.keywords])) {
+      searchedKeywords.push(keyword);
+      trace.push({
+        type: "tool_call",
+        nodeName: "ResourceDiscoveryAgent",
+        toolName: "searchResources",
+        input: { keyword },
+      });
+      try {
+        const snapshot = await input.searchResources({ keyword });
+        snapshots.push(snapshot);
+        trace.push({
+          type: "tool_result",
+          nodeName: "ResourceDiscoveryAgent",
+          toolName: "searchResources",
+          output: {
+            snapshotId: snapshot.id,
+            keyword: snapshot.keyword,
+            candidateCount: snapshot.candidates.length,
+          },
+        });
+
+        if (snapshot.candidates.length > 0) {
+          trace.push({
+            type: "node_finish",
+            nodeName: "ResourceDiscoveryAgent",
+            schemaName: "resource_discovery",
+          });
+          return {
+            snapshot,
+            snapshots,
+            decision: {
+              node: "fake_resource_discovery",
+              selectedSnapshotId: snapshot.id,
+              searchedKeywords,
+              rejectedSnapshotIds,
+              confidence: "high",
+              reason: "Fake discovery selected the first non-empty resource snapshot.",
+            },
+            trace,
+          };
+        }
+
+        lastEmptySnapshot = snapshot;
+        rejectedSnapshotIds.push(snapshot.id);
+      } catch (error) {
+        lastError = error;
+        trace.push({
+          type: "tool_result",
+          nodeName: "ResourceDiscoveryAgent",
+          toolName: "searchResources",
+          output: {
+            keyword,
+            error: errorMessage(error),
+          },
+        });
+      }
+    }
+
+    trace.push({
+      type: "node_finish",
+      nodeName: "ResourceDiscoveryAgent",
+      schemaName: "resource_discovery",
+    });
+
+    if (lastError !== null) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error(`Resource discovery failed before a usable resource snapshot could be created: ${String(lastError)}`);
+    }
+
+    if (lastEmptySnapshot !== null) {
+      return {
+        snapshot: lastEmptySnapshot,
+        snapshots,
+        decision: {
+          node: "fake_resource_discovery",
+          selectedSnapshotId: lastEmptySnapshot.id,
+          searchedKeywords,
+          rejectedSnapshotIds,
+          confidence: "low",
+          reason: "Fake discovery found only empty snapshots.",
+        },
+        trace,
+      };
+    }
+
+    throw new Error("Resource discovery failed before a resource snapshot could be created");
+  }
+
   async matchCandidates(input: {
     snapshotId: string;
     title: string;
@@ -276,6 +393,24 @@ function isProviderAheadEpisode(episodeCode: string, latestAiredEpisode: number)
   } catch {
     return false;
   }
+}
+
+function uniqueKeywords(keywords: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const keyword of keywords) {
+    const trimmed = keyword.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    unique.push(trimmed);
+  }
+  return unique;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function cloneTransferOutcomes(transferOutcomes: Record<string, TransferOutcome>): Record<string, TransferOutcome> {

@@ -263,68 +263,69 @@ async function searchResourceSnapshot(input: {
   agents: AgentNodes;
   auditEvents: AuditEvent[];
 }): Promise<ResourceSnapshot> {
-  const keywordPlan = await input.agents.generateKeywords({
+  const discovery = await input.agents.discoverResources({
     title: input.title.title,
     aliases: input.title.aliases,
     missingEpisodes: input.missingEpisodes,
-    previousErrors: [],
-  });
-  input.auditEvents.push({
-    type: "keyword_plan_created",
-    message: "Created agent keyword plan",
-    data: {
-      keywords: keywordPlan.keywords,
-      reason: keywordPlan.reason,
-    },
+    initialKeyword: input.keyword,
+    searchResources: async ({ keyword }) => input.resourceProvider.search({ keyword }),
   });
 
-  let lastEmptySnapshot: ResourceSnapshot | null = null;
-  let lastError: unknown = null;
-  for (const keyword of uniqueKeywords([input.keyword, ...keywordPlan.keywords])) {
-    try {
-      const snapshot = await input.resourceProvider.search({ keyword });
-      input.auditEvents.push({
-        type: "resource_snapshot_created",
-        message: `Created resource snapshot ${snapshot.id}`,
-        data: {
-          snapshotId: snapshot.id,
-          keyword: snapshot.keyword,
-          candidateCount: snapshot.candidates.length,
-        },
-      });
-      if (snapshot.candidates.length > 0) {
-        return snapshot;
-      }
-      lastEmptySnapshot = snapshot;
+  input.auditEvents.push({
+    type: "resource_discovery_decision_created",
+    message: `Created resource discovery decision ${discovery.decision.node}`,
+    data: {
+      selectedSnapshotId: discovery.decision.selectedSnapshotId,
+      searchedKeywords: discovery.decision.searchedKeywords,
+      rejectedSnapshotIds: discovery.decision.rejectedSnapshotIds,
+      confidence: discovery.decision.confidence,
+      reason: discovery.decision.reason,
+      trace: discovery.trace,
+    },
+  });
+  for (const event of discovery.trace) {
+    if (event.type !== "tool_result" || !isSearchErrorOutput(event.output)) {
+      continue;
+    }
+    input.auditEvents.push({
+      type: "keyword_search_failed",
+      message: `Search keyword failed: ${event.output.keyword}`,
+      data: {
+        keyword: event.output.keyword,
+        error: event.output.error,
+      },
+    });
+  }
+  for (const snapshot of discovery.snapshots) {
+    input.auditEvents.push({
+      type: "resource_snapshot_created",
+      message: `Created resource snapshot ${snapshot.id}`,
+      data: {
+        snapshotId: snapshot.id,
+        keyword: snapshot.keyword,
+        candidateCount: snapshot.candidates.length,
+      },
+    });
+    if (snapshot.candidates.length === 0) {
       input.auditEvents.push({
         type: "keyword_search_empty",
-        message: `Search keyword returned no candidates: ${keyword}`,
-        data: { keyword },
-      });
-    } catch (error) {
-      lastError = error;
-      input.auditEvents.push({
-        type: "keyword_search_failed",
-        message: `Search keyword failed: ${keyword}`,
-        data: {
-          keyword,
-          error: errorMessage(error),
-        },
+        message: `Search keyword returned no candidates: ${snapshot.keyword}`,
+        data: { keyword: snapshot.keyword },
       });
     }
   }
+  return discovery.snapshot;
+}
 
-  if (lastError !== null) {
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(`Resource search failed before a usable resource snapshot could be created: ${String(lastError)}`);
-  }
-
-  if (lastEmptySnapshot !== null) {
-    return lastEmptySnapshot;
-  }
-
-  throw new Error("Resource search failed before a resource snapshot could be created");
+function isSearchErrorOutput(output: unknown): output is { keyword: string; error: string } {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "keyword" in output &&
+    "error" in output &&
+    typeof output.keyword === "string" &&
+    typeof output.error === "string"
+  );
 }
 
 async function matchSnapshotCandidates(input: {
@@ -441,22 +442,4 @@ function assertCandidateMatchUsesSnapshot(
   if (duplicatedCandidates.length > 0) {
     throw new Error(`Candidate match decision put candidates in multiple buckets: ${duplicatedCandidates.join(", ")}`);
   }
-}
-
-function uniqueKeywords(keywords: string[]): string[] {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const keyword of keywords) {
-    const trimmed = keyword.trim();
-    if (!trimmed || seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    unique.push(trimmed);
-  }
-  return unique;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -99,6 +99,15 @@ export interface CandidateMatchDecision {
   reason: string;
 }
 
+export interface ResourceDiscoveryDecision {
+  node: string;
+  selectedSnapshotId: string | null;
+  searchedKeywords: string[];
+  rejectedSnapshotIds: string[];
+  confidence: Confidence;
+  reason: string;
+}
+
 export interface TransferAttempt {
   id: string;
   workflowRunId: string;
