@@ -484,8 +484,9 @@ notification.
 Given a candidate transfer returns provider message "already transferred" but
 adds no file to the target directory,
 when the workflow verifies the directory,
-then it records `no_target_change`, does not mark the episode obtained, and
-tries the next valid fallback candidate if one exists.
+then it records `no_target_change`, does not mark the episode obtained, and only
+continues to another candidate if that candidate was selected by the agent from
+the current snapshot or by a fresh agent pass that includes the failure evidence.
 
 ### Scenario 4: Provider Search Needs Keyword Recovery
 
@@ -540,7 +541,7 @@ Use workflow tests for:
 - full Type 2 initialization
 - full Type 3 repair
 - provider error recovery
-- no-target-change fallback from the same resource snapshot
+- no-target-change recovery through agent-selected candidates from the same resource snapshot
 - provider-ahead verified files
 - pre-search storage reconciliation
 
