@@ -19,11 +19,32 @@ import type {
   PackageRecognitionDecision,
   PackageRecognitionInput,
 } from "./package-normalizer.js";
-import type { AgentNodes, ResourceDiscoveryInput, ResourceDiscoveryResult } from "./ports.js";
+import type {
+  AcquisitionPlanningInput,
+  AcquisitionPlanningResult,
+  AgentNodes,
+  ResourceDiscoveryInput,
+  ResourceDiscoveryResult,
+} from "./ports.js";
 
 const DEFAULT_PROVIDER_NAME = "xiaomi-mimo";
 const DEFAULT_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1";
 const DEFAULT_MODEL_ID = "mimo-v2.5-pro";
+
+const acquisitionPlanningSchema = z.object({
+  selectedSnapshotId: z.string().nullable(),
+  searchedKeywords: z.array(z.string()),
+  candidateDispositions: z.array(
+    z.object({
+      candidateId: z.string(),
+      disposition: z.enum(["selected", "rejected", "uncertain"]),
+      episodes: z.array(z.string()),
+      reason: z.string(),
+    }),
+  ),
+  confidence: z.enum(["low", "medium", "high"]),
+  reason: z.string(),
+});
 
 const keywordGenerationSchema = z.object({
   keywords: z.array(z.string()).min(1),
@@ -77,6 +98,7 @@ const packageRecognitionSchema = z.object({
   reason: z.string(),
 });
 
+type AcquisitionPlanningOutput = z.infer<typeof acquisitionPlanningSchema>;
 type KeywordGenerationOutput = z.infer<typeof keywordGenerationSchema>;
 type EpisodeCoverageOutput = z.infer<typeof episodeCoverageSchema>;
 type CandidateMatchOutput = z.infer<typeof candidateMatchSchema>;
@@ -84,6 +106,7 @@ type ResourceDiscoveryOutput = z.infer<typeof resourceDiscoverySchema>;
 type QualitySelectionOutput = z.infer<typeof qualitySelectionSchema>;
 type PackageRecognitionOutput = z.infer<typeof packageRecognitionSchema>;
 type StructuredOutput =
+  | AcquisitionPlanningOutput
   | KeywordGenerationOutput
   | EpisodeCoverageOutput
   | CandidateMatchOutput
@@ -109,6 +132,68 @@ export class VercelAiAgentNodes implements AgentNodes {
   constructor(options: VercelAiAgentNodesOptions = {}) {
     this.generateStructuredOutput =
       options.generateStructuredOutput ?? createAiSdkStructuredGenerator(options);
+  }
+
+  async planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult> {
+    const snapshots: ResourceSnapshot[] = [];
+    const result = await runAgentNode({
+      spec: AGENT_NODE_SPECS.AcquisitionPlanningAgent,
+      input: {
+        title: input.title,
+        aliases: input.aliases,
+        seasonNumber: input.seasonNumber,
+        qualityPreference: input.qualityPreference,
+        missingEpisodes: input.missingEpisodes,
+        latestAiredEpisode: input.latestAiredEpisode,
+        initialKeyword: input.initialKeyword,
+        failureEvidence: input.failureEvidence,
+      },
+      tools: {
+        searchResources: {
+          readOnly: true,
+          description:
+            "Search the resource provider with one keyword. Read-only. Returns the full persisted ResourceSnapshot; judge from this complete evidence. Returns {keyword, error} when the provider fails.",
+          inputSchema: AGENT_NODE_SPECS.AcquisitionPlanningAgent.toolInputSchemas.searchResources,
+          execute: async ({ keyword }) => {
+            try {
+              const snapshot = await input.searchResources({ keyword });
+              snapshots.push(snapshot);
+              return {
+                snapshotId: snapshot.id,
+                provider: snapshot.provider,
+                keyword: snapshot.keyword,
+                candidateCount: snapshot.candidates.length,
+                candidates: snapshot.candidates.map((candidate) => ({
+                  id: candidate.id,
+                  title: candidate.title,
+                  type: candidate.type,
+                  source: candidate.source,
+                  episodeHints: candidate.episodeHints,
+                  qualityHints: candidate.qualityHints,
+                })),
+              };
+            } catch (error) {
+              return { keyword, error: error instanceof Error ? error.message : String(error) };
+            }
+          },
+        },
+      },
+      executor: this.generateStructuredOutput,
+    });
+    const output = acquisitionPlanningSchema.parse(result.output);
+
+    return {
+      plan: {
+        node: "vercel_ai_acquisition_planning",
+        selectedSnapshotId: output.selectedSnapshotId,
+        searchedKeywords: output.searchedKeywords,
+        candidateDispositions: output.candidateDispositions,
+        confidence: output.confidence as Confidence,
+        reason: output.reason,
+      },
+      snapshots,
+      trace: result.trace,
+    };
   }
 
   async generateKeywords(input: {
@@ -359,6 +444,8 @@ function createAiSdkStructuredGenerator(options: VercelAiAgentNodesOptions): Gen
 
 function schemaFor(schemaName: StructuredOutputRequest["schemaName"]) {
   switch (schemaName) {
+    case "acquisition_planning":
+      return acquisitionPlanningSchema;
     case "keyword_generation":
       return keywordGenerationSchema;
     case "resource_discovery":

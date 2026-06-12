@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 export type AgentNodeName =
+  | "AcquisitionPlanningAgent"
   | "KeywordAgent"
   | "ResourceDiscoveryAgent"
   | "CandidateMatchAgent"
@@ -11,6 +12,7 @@ export type AgentNodeName =
 export interface AgentNodeSpec {
   nodeName: AgentNodeName;
   schemaName:
+    | "acquisition_planning"
     | "keyword_generation"
     | "resource_discovery"
     | "candidate_match"

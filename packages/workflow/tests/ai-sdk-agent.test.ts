@@ -351,3 +351,98 @@ describe("VercelAiAgentNodes", () => {
     });
   });
 });
+
+describe("VercelAiAgentNodes.planAcquisition", () => {
+  it("plans acquisition through the read-only search tool and observed snapshots", async () => {
+    const snapshot: ResourceSnapshot = {
+      id: "snapshot_1",
+      provider: "fake",
+      keyword: "Show 4K",
+      candidates: [
+        {
+          id: "snapshot_1_candidate_1",
+          snapshotId: "snapshot_1",
+          index: 0,
+          title: "Show S01E01 4K",
+          type: "115",
+          source: "fake",
+          episodeHints: ["S01E01"],
+          qualityHints: ["4K"],
+          providerPayload: {},
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const agent = new VercelAiAgentNodes({
+      generateStructuredOutput: async (request) => {
+        expect(request.schemaName).toBe("acquisition_planning");
+        expect(request.prompt).toContain("failureEvidence");
+        const observed = await request.tools!.searchResources!.execute({ keyword: "Show 4K" });
+        expect(observed).toMatchObject({ snapshotId: "snapshot_1", candidateCount: 1 });
+        return {
+          selectedSnapshotId: "snapshot_1",
+          searchedKeywords: ["Show 4K"],
+          candidateDispositions: [
+            {
+              candidateId: "snapshot_1_candidate_1",
+              disposition: "selected",
+              episodes: ["S01E01"],
+              reason: "Exact missing episode.",
+            },
+          ],
+          confidence: "high",
+          reason: "Initial keyword was enough.",
+        };
+      },
+    });
+
+    const result = await agent.planAcquisition({
+      title: "Show",
+      aliases: [],
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E01"],
+      latestAiredEpisode: 1,
+      initialKeyword: "Show 4K",
+      failureEvidence: [],
+      searchResources: async () => snapshot,
+    });
+
+    expect(result.plan.node).toBe("vercel_ai_acquisition_planning");
+    expect(result.plan.selectedSnapshotId).toBe("snapshot_1");
+    expect(result.snapshots).toEqual([snapshot]);
+  });
+
+  it("surfaces provider errors to the model as tool results instead of throwing", async () => {
+    const agent = new VercelAiAgentNodes({
+      generateStructuredOutput: async (request) => {
+        const observed = await request.tools!.searchResources!.execute({ keyword: "Show 4K" });
+        expect(observed).toEqual({ keyword: "Show 4K", error: "provider 400" });
+        return {
+          selectedSnapshotId: null,
+          searchedKeywords: ["Show 4K"],
+          candidateDispositions: [],
+          confidence: "low",
+          reason: "Provider failed for every keyword tried.",
+        };
+      },
+    });
+
+    const result = await agent.planAcquisition({
+      title: "Show",
+      aliases: [],
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E01"],
+      latestAiredEpisode: 1,
+      initialKeyword: "Show 4K",
+      failureEvidence: [],
+      searchResources: async () => {
+        throw new Error("provider 400");
+      },
+    });
+
+    expect(result.plan.selectedSnapshotId).toBeNull();
+    expect(result.snapshots).toEqual([]);
+  });
+});

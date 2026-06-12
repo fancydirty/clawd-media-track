@@ -1,4 +1,6 @@
 import type {
+  AcquisitionFailureEvidence,
+  AcquisitionPlan,
   AgentDecision,
   CandidateMatchDecision,
   ResourceDiscoveryDecision,
@@ -44,7 +46,26 @@ export interface ResourceDiscoveryResult {
   trace: AgentNodeTraceEvent[];
 }
 
+export interface AcquisitionPlanningInput {
+  title: string;
+  aliases: string[];
+  seasonNumber: number;
+  qualityPreference: string;
+  missingEpisodes: string[];
+  latestAiredEpisode: number;
+  initialKeyword: string;
+  failureEvidence: AcquisitionFailureEvidence[];
+  searchResources(input: { keyword: string }): Promise<ResourceSnapshot>;
+}
+
+export interface AcquisitionPlanningResult {
+  plan: AcquisitionPlan;
+  snapshots: ResourceSnapshot[];
+  trace: AgentNodeTraceEvent[];
+}
+
 export interface AgentNodes {
+  planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult>;
   generateKeywords(input: {
     title: string;
     aliases: string[];

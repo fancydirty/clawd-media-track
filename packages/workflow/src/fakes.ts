@@ -1,5 +1,6 @@
 import {
   type AgentDecision,
+  type CandidateDisposition,
   type CandidateMatchDecision,
   type ResourceCandidate,
   type ResourceSnapshot,
@@ -12,6 +13,8 @@ import type {
   PackageRecognitionInput,
 } from "./package-normalizer.js";
 import type {
+  AcquisitionPlanningInput,
+  AcquisitionPlanningResult,
   AgentNodes,
   ResourceDiscoveryInput,
   ResourceDiscoveryResult,
@@ -181,6 +184,104 @@ export class FakeAgentNodes implements AgentNodes {
 
   constructor(options: FakeAgentNodesOptions = {}) {
     this.packageRecognition = options.packageRecognition;
+  }
+
+  async planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult> {
+    const failedTitles = new Set(input.failureEvidence.map((evidence) => evidence.candidateTitle));
+    const keywords = uniqueKeywords([
+      input.initialKeyword,
+      input.title,
+      ...input.aliases,
+      `${input.title} 4K`,
+    ]);
+    const snapshots: ResourceSnapshot[] = [];
+    const searchedKeywords: string[] = [];
+    const trace: AcquisitionPlanningResult["trace"] = [
+      {
+        type: "node_start",
+        nodeName: "AcquisitionPlanningAgent",
+        schemaName: "acquisition_planning",
+        maxSteps: 12,
+      },
+    ];
+
+    for (const keyword of keywords) {
+      searchedKeywords.push(keyword);
+      trace.push({
+        type: "tool_call",
+        nodeName: "AcquisitionPlanningAgent",
+        toolName: "searchResources",
+        input: { keyword },
+      });
+      let snapshot: ResourceSnapshot;
+      try {
+        snapshot = await input.searchResources({ keyword });
+      } catch (error) {
+        trace.push({
+          type: "tool_result",
+          nodeName: "AcquisitionPlanningAgent",
+          toolName: "searchResources",
+          output: { keyword, error: errorMessage(error) },
+        });
+        continue;
+      }
+      snapshots.push(snapshot);
+      trace.push({
+        type: "tool_result",
+        nodeName: "AcquisitionPlanningAgent",
+        toolName: "searchResources",
+        output: { snapshotId: snapshot.id, keyword: snapshot.keyword, candidateCount: snapshot.candidates.length },
+      });
+      if (snapshot.candidates.length === 0) {
+        continue;
+      }
+
+      const dispositions = minimalCoveringDispositions({
+        candidates: snapshot.candidates,
+        missingEpisodes: input.missingEpisodes,
+        failedTitles,
+      });
+      trace.push({
+        type: "node_finish",
+        nodeName: "AcquisitionPlanningAgent",
+        schemaName: "acquisition_planning",
+      });
+      const hasSelection = dispositions.some((disposition) => disposition.disposition === "selected");
+      return {
+        plan: {
+          node: "fake_acquisition_planning",
+          selectedSnapshotId: hasSelection ? snapshot.id : null,
+          searchedKeywords,
+          candidateDispositions: hasSelection
+            ? dispositions
+            : dispositions.map((disposition) => ({ ...disposition, episodes: [] })),
+          confidence: hasSelection ? "high" : "low",
+          reason: hasSelection
+            ? "Fake planning selected a minimal covering set by episode hints."
+            : "Fake planning found no candidate covering the missing episodes.",
+        },
+        snapshots,
+        trace,
+      };
+    }
+
+    trace.push({
+      type: "node_finish",
+      nodeName: "AcquisitionPlanningAgent",
+      schemaName: "acquisition_planning",
+    });
+    return {
+      plan: {
+        node: "fake_acquisition_planning",
+        selectedSnapshotId: null,
+        searchedKeywords,
+        candidateDispositions: [],
+        confidence: "low",
+        reason: "Fake planning exhausted keywords without a non-empty snapshot.",
+      },
+      snapshots,
+      trace,
+    };
   }
 
   async generateKeywords(input: {
@@ -393,6 +494,58 @@ function isProviderAheadEpisode(episodeCode: string, latestAiredEpisode: number)
   } catch {
     return false;
   }
+}
+
+function minimalCoveringDispositions(input: {
+  candidates: ResourceCandidate[];
+  missingEpisodes: string[];
+  failedTitles: Set<string>;
+}): CandidateDisposition[] {
+  const missing = new Set(input.missingEpisodes);
+  const chosen = new Set<string>();
+  const coveredByChosen = new Set<string>();
+  for (const episode of input.missingEpisodes) {
+    if (coveredByChosen.has(episode)) {
+      continue;
+    }
+    const candidate = input.candidates.find(
+      (item) => item.episodeHints.includes(episode) && !input.failedTitles.has(item.title),
+    );
+    if (candidate === undefined) {
+      continue;
+    }
+    chosen.add(candidate.id);
+    for (const hint of candidate.episodeHints) {
+      if (missing.has(hint)) {
+        coveredByChosen.add(hint);
+      }
+    }
+  }
+
+  return input.candidates.map((candidate) => {
+    if (chosen.has(candidate.id)) {
+      return {
+        candidateId: candidate.id,
+        disposition: "selected" as const,
+        episodes: [...candidate.episodeHints],
+        reason: "Fake selection: episode hints cover missing episodes.",
+      };
+    }
+    if (input.failedTitles.has(candidate.title)) {
+      return {
+        candidateId: candidate.id,
+        disposition: "rejected" as const,
+        episodes: [],
+        reason: "Fake rejection: failure evidence names this resource.",
+      };
+    }
+    return {
+      candidateId: candidate.id,
+      disposition: "rejected" as const,
+      episodes: [],
+      reason: "Fake rejection: not needed for minimal coverage.",
+    };
+  });
 }
 
 function uniqueKeywords(keywords: string[]): string[] {

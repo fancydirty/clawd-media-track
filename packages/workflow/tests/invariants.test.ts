@@ -338,3 +338,104 @@ function candidateFixture(id: string): ResourceCandidate {
     },
   };
 }
+
+describe("FakeAgentNodes.planAcquisition", () => {
+  it("selects a minimal covering set with full dispositions", async () => {
+    const provider = new FakeResourceProvider({
+      keywordResults: {
+        "翘楚 4K": [
+          { title: "翘楚 S01E13 primary", episodeHints: ["S01E13"] },
+          { title: "翘楚 S01E13 fallback", episodeHints: ["S01E13"] },
+          { title: "翘楚 S01E14 fallback", episodeHints: ["S01E14"] },
+        ],
+      },
+    });
+    const agent = new FakeAgentNodes();
+
+    const result = await agent.planAcquisition({
+      title: "翘楚",
+      aliases: ["Ashes to Crown"],
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E13", "S01E14"],
+      latestAiredEpisode: 14,
+      initialKeyword: "翘楚 4K",
+      failureEvidence: [],
+      searchResources: ({ keyword }) => provider.search({ keyword }),
+    });
+
+    expect(result.plan.selectedSnapshotId).toBe("snapshot_1");
+    expect(result.plan.candidateDispositions).toHaveLength(3);
+    const selected = result.plan.candidateDispositions.filter((d) => d.disposition === "selected");
+    expect(selected.map((d) => d.candidateId)).toEqual(["snapshot_1_candidate_1", "snapshot_1_candidate_3"]);
+    expect(result.snapshots).toHaveLength(1);
+  });
+
+  it("avoids candidates named in failure evidence on a re-planning pass", async () => {
+    const provider = new FakeResourceProvider({
+      keywordResults: {
+        "翘楚 4K": [
+          { title: "翘楚 S01E13 primary", episodeHints: ["S01E13"] },
+          { title: "翘楚 S01E13 fallback", episodeHints: ["S01E13"] },
+        ],
+      },
+    });
+    const agent = new FakeAgentNodes();
+
+    const result = await agent.planAcquisition({
+      title: "翘楚",
+      aliases: [],
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E13"],
+      latestAiredEpisode: 14,
+      initialKeyword: "翘楚 4K",
+      failureEvidence: [
+        {
+          candidateId: "snapshot_0_candidate_1",
+          candidateTitle: "翘楚 S01E13 primary",
+          transferStatus: "no_target_change",
+          providerMessage: "already transferred elsewhere",
+          episodesStillMissing: ["S01E13"],
+        },
+      ],
+      searchResources: ({ keyword }) => provider.search({ keyword }),
+    });
+
+    const selected = result.plan.candidateDispositions.filter((d) => d.disposition === "selected");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.candidateId).toBe("snapshot_1_candidate_2");
+  });
+
+  it("recovers from keyword errors and returns a no-coverage plan when nothing covers", async () => {
+    const provider = new FakeResourceProvider({
+      keywordErrors: { "翘楚 4K": "provider 400" },
+      keywordResults: { "翘楚": [] },
+    });
+    const agent = new FakeAgentNodes();
+
+    const result = await agent.planAcquisition({
+      title: "翘楚",
+      aliases: [],
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E13"],
+      latestAiredEpisode: 14,
+      initialKeyword: "翘楚 4K",
+      failureEvidence: [],
+      searchResources: ({ keyword }) => provider.search({ keyword }),
+    });
+
+    expect(result.plan.selectedSnapshotId).toBeNull();
+    expect(result.plan.searchedKeywords).toContain("翘楚 4K");
+    expect(
+      result.trace.some(
+        (event) =>
+          event.type === "tool_result" &&
+          typeof event.output === "object" &&
+          event.output !== null &&
+          "error" in event.output,
+      ),
+    ).toBe(true);
+  });
+});

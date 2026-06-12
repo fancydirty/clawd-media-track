@@ -1,4 +1,5 @@
 import type { AgentNodeName, AgentNodeSpec } from "./agent-node-types.js";
+import { ACQUISITION_PLANNING_AGENT_SPEC } from "./agent-nodes/acquisition-planning-agent.js";
 import { CANDIDATE_MATCH_AGENT_SPEC } from "./agent-nodes/candidate-match-agent.js";
 import { EPISODE_COVERAGE_AGENT_SPEC } from "./agent-nodes/episode-coverage-agent.js";
 import { KEYWORD_AGENT_SPEC } from "./agent-nodes/keyword-agent.js";
@@ -9,6 +10,7 @@ import { RESOURCE_DISCOVERY_AGENT_SPEC } from "./agent-nodes/resource-discovery-
 export type { AgentNodeName, AgentNodeSpec } from "./agent-node-types.js";
 
 export const AGENT_NODE_SPECS = {
+  AcquisitionPlanningAgent: ACQUISITION_PLANNING_AGENT_SPEC,
   KeywordAgent: KEYWORD_AGENT_SPEC,
   ResourceDiscoveryAgent: RESOURCE_DISCOVERY_AGENT_SPEC,
   CandidateMatchAgent: CANDIDATE_MATCH_AGENT_SPEC,
