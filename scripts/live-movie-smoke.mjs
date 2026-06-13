@@ -120,8 +120,11 @@ console.log("[4/4] verifying persisted run and physical files ...");
 if (result.status === "ran") {
   const snapshot = await repository.getWorkflowRunSnapshot(result.workflowRunId);
   console.log("      workflow status:", snapshot?.workflowRun.status);
-  console.log("      movie directory:", snapshot?.season.storageDirectoryId);
-  const landed = await storage.listVideoFiles(snapshot?.season.storageDirectoryId ?? "");
-  console.log("      landed videos:", JSON.stringify(landed.map((f) => f.name)));
+  const movieDir = snapshot?.season.storageDirectoryId ?? "";
+  console.log("      movie directory:", movieDir || "(none — no_coverage)");
+  if (movieDir) {
+    const landed = await storage.listVideoFiles(movieDir);
+    console.log("      landed videos:", JSON.stringify(landed.map((f) => f.name)));
+  }
   console.log("      notification:", snapshot?.notifications?.[0]?.body);
 }
