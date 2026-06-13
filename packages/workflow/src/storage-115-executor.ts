@@ -307,12 +307,14 @@ export class Storage115Executor implements StorageExecutor {
   }
 
   async listVideoFiles(directoryId: string): Promise<VerifiedFile[]> {
-    const videos = await this.collectVideos(directoryId, directoryId);
+    const safe = this.assertSafeRecursiveListTarget(directoryId, "list videos in");
+    const videos = await this.collectVideos(safe, safe);
     return videos.map((video) => video.file);
   }
 
   async listUnparsedVideoFiles(directoryId: string): Promise<UnparsedVideoFile[]> {
-    return this.collectUnparsedVideos(directoryId);
+    const safe = this.assertSafeRecursiveListTarget(directoryId, "list unparsed videos in");
+    return this.collectUnparsedVideos(safe);
   }
 
   async renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void> {
@@ -399,6 +401,7 @@ export class Storage115Executor implements StorageExecutor {
   }
 
   async listTree(input: { directoryId: string; maxDepth?: number }): Promise<PackageTreeFile[]> {
+    const safeRoot = this.assertSafeRecursiveListTarget(input.directoryId, "walk the tree of");
     const maxDepth = input.maxDepth ?? 6;
     const results: PackageTreeFile[] = [];
     const walk = async (directoryId: string, prefix: string, depth: number): Promise<void> => {
@@ -426,7 +429,7 @@ export class Storage115Executor implements StorageExecutor {
         });
       }
     };
-    await walk(normalizeDirectoryId(input.directoryId), "", 1);
+    await walk(safeRoot, "", 1);
     return results;
   }
 
@@ -480,6 +483,25 @@ export class Storage115Executor implements StorageExecutor {
     }
 
     return { ok: false, message: `unsupported 115 transfer url: ${url.slice(0, 50)}` };
+  }
+
+  /**
+   * Code fence for recursive directory reads. `listVideoFiles`/`listTree` walk
+   * a directory tree and were written to dig media out of nested package
+   * folders — pointing them at a root/parent/category directory would scan a
+   * huge subtree and risk a 115 rate-limit lockout. They are ONLY ever valid on
+   * a leaf (a season or movie directory). Refuse anything protected, and refuse
+   * the empty/root cid (normalizeDirectoryId throws on empty).
+   */
+  private assertSafeRecursiveListTarget(directoryId: string, action: string): string {
+    const normalized = normalizeDirectoryId(directoryId);
+    if (this.protectedDirectoryIds.has(normalized)) {
+      throw new Error(
+        `SAFETY_VIOLATION: refusing to recursively ${action} protected directory cid=${normalized}; ` +
+          "root/parent/category directories are never valid targets for recursive listing (115 rate-limit risk)",
+      );
+    }
+    return normalized;
   }
 
   private async assertSafeFlattenTarget(directoryId: string): Promise<string> {

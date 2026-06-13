@@ -101,6 +101,26 @@ describe("Storage115Executor", () => {
     );
   });
 
+  it("refuses recursive listing of protected root/parent/category directories", async () => {
+    const executor = createProtectedStorage115Executor({
+      api: new FakePan115Api(),
+      env: {
+        MEDIA_TRACK_115_TEST_ROOT_CID: "test_root",
+        CLAWD_MEDIA_ROOT_CID: "media_root",
+        TV_SHOWS_CID: "tv_root",
+      },
+      apiGuardOptions: { minDelayMs: 0 },
+    });
+
+    await expect(executor.listVideoFiles("test_root")).rejects.toThrow(
+      "SAFETY_VIOLATION: refusing to recursively list videos in protected directory cid=test_root",
+    );
+    await expect(executor.listVideoFiles("tv_root")).rejects.toThrow("SAFETY_VIOLATION");
+    await expect(executor.listTree({ directoryId: "media_root" })).rejects.toThrow("SAFETY_VIOLATION");
+    // The 115 root cid "0" is always protected.
+    await expect(executor.listUnparsedVideoFiles("0")).rejects.toThrow("SAFETY_VIOLATION");
+  });
+
   it("transfers a selected 115 candidate and verifies newly materialized video files", async () => {
     const api = new FakePan115Api({
       shareFiles: {
