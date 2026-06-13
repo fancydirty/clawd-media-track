@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  prepareMovieTarget,
   prepareTrackingTarget,
   TmdbMetadataProvider,
   TmdbSearchProvider,
@@ -303,5 +304,33 @@ describe("TmdbSearchProvider", () => {
 
     expect(target.title.type).toBe("anime");
     expect(target.title.id).toBe("tmdb_tv_240411");
+  });
+
+  it("prepares a movie target and classifies a Japanese animated film as anime", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/movie/129?")) {
+          return {
+            id: 129,
+            title: "千与千寻",
+            original_title: "千と千尋の神隠し",
+            release_date: "2001-07-20",
+            overview: "",
+            poster_path: "/p.jpg",
+            backdrop_path: null,
+            genres: [{ id: 16, name: "动画" }],
+            production_countries: [{ iso_3166_1: "JP", name: "Japan" }],
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const target = await prepareMovieTarget({ tmdbId: 129, qualityPreference: "4K", metadataProvider: provider });
+    expect(target.title.id).toBe("tmdb_movie_129");
+    expect(target.title.type).toBe("anime");
+    expect(target.title.year).toBe(2001);
+    expect(target.keyword).toContain("千与千寻");
   });
 });

@@ -79,6 +79,18 @@ interface TmdbSeasonDetails {
   }>;
 }
 
+interface TmdbMovieDetails {
+  id: number;
+  title: string;
+  original_title: string;
+  release_date: string;
+  overview: string;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  genres: number[];
+  origin_country: string[];
+}
+
 export class TmdbMetadataProvider {
   private readonly readToken: string;
   private readonly baseURL: string;
@@ -106,6 +118,10 @@ export class TmdbMetadataProvider {
         language: this.language,
       }),
     );
+  }
+
+  async getMovieDetails(tmdbId: number): Promise<TmdbMovieDetails> {
+    return parseMovieDetails(await this.get(`movie/${tmdbId}`, { language: this.language }));
   }
 
   private async get(path: string, query: Record<string, string>): Promise<unknown> {
@@ -246,6 +262,41 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
   };
 }
 
+export interface PreparedMovieTarget {
+  title: MediaTitle;
+  keyword: string;
+}
+
+/** "获取电影" prepare step: one TMDB movie details call → a movie MediaTitle. */
+export async function prepareMovieTarget(input: {
+  tmdbId: number;
+  qualityPreference: string;
+  metadataProvider: TmdbMetadataProvider;
+}): Promise<PreparedMovieTarget> {
+  const details = await input.metadataProvider.getMovieDetails(input.tmdbId);
+  const titleId = `tmdb_movie_${details.id}`;
+  const title = normalizeTitle(details.title);
+  return {
+    title: {
+      id: titleId,
+      tmdbId: details.id,
+      type: classifyMediaType({
+        baseType: "movie",
+        genreIds: details.genres,
+        originCountries: details.origin_country,
+      }),
+      title,
+      originalTitle: normalizeTitle(details.original_title) || title,
+      year: yearFromDate(details.release_date),
+      aliases: aliasList(title, details.original_title),
+      posterPath: details.poster_path,
+      backdropPath: details.backdrop_path,
+      overview: details.overview,
+    },
+    keyword: `${title} ${input.qualityPreference}`.trim(),
+  };
+}
+
 export interface PreparedSeriesTarget {
   title: MediaTitle;
   seasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }>;
@@ -345,6 +396,34 @@ function parseTvDetails(value: unknown): TmdbTvDetails {
       : [],
     origin_country: Array.isArray(value["origin_country"])
       ? value["origin_country"].filter((country): country is string => typeof country === "string")
+      : [],
+  };
+}
+
+function parseMovieDetails(value: unknown): TmdbMovieDetails {
+  if (!isRecord(value)) {
+    throw new Error("TMDB movie details response must be an object");
+  }
+  return {
+    id: numberValue(value["id"]),
+    title: stringValue(value["title"]),
+    original_title: stringValue(value["original_title"]),
+    release_date: stringValue(value["release_date"]),
+    overview: stringValue(value["overview"]),
+    poster_path: optionalStringOrNull(value["poster_path"]),
+    backdrop_path: optionalStringOrNull(value["backdrop_path"]),
+    genres: Array.isArray(value["genres"])
+      ? value["genres"]
+          .filter(isRecord)
+          .map((genre) => optionalNumberValue(genre["id"]))
+          .filter((id): id is number => id !== undefined)
+      : [],
+    // Movies expose production_countries rather than origin_country.
+    origin_country: Array.isArray(value["production_countries"])
+      ? value["production_countries"]
+          .filter(isRecord)
+          .map((country) => country["iso_3166_1"])
+          .filter((code): code is string => typeof code === "string")
       : [],
   };
 }

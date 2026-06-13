@@ -14,10 +14,13 @@ import {
   getTrackedSeasonStatusView,
   importForeignWorkAsMovie,
   assertWorkflowAgentAdapterPolicy,
+  prepareMovieTarget,
   prepareSeriesTarget,
   prepareTrackingTarget,
+  queueMovieAcquisition,
   queueSeriesInitialization,
   queueTrackingInitialization,
+  runQueuedMovieAcquisition,
   runQueuedSeriesInitialization,
   runQueuedType2Workflow,
   runScheduledType3Monitoring,
@@ -35,7 +38,7 @@ import {
   type VerifiedFile,
   type WorkflowRepository,
 } from "@media-track/workflow";
-import { findDemoCandidateById } from "./demo-candidates";
+import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
 
 export type CandidateTrackingRequestResult =
@@ -96,6 +99,24 @@ export async function getWorkflowStatusView(
 }
 
 export async function queueCandidateTracking(candidateId: string): Promise<CandidateTrackingRequestResult> {
+  const movieTmdbId = parseMovieCandidateId(candidateId);
+  if (movieTmdbId !== null) {
+    const movie = await movieTargetFromTmdbId(movieTmdbId);
+    if (!movie) {
+      return { status: "unsupported", message: "无法获取该电影的信息。" };
+    }
+    const request = await queueMovieAcquisition({
+      title: movie.title,
+      keyword: movie.keyword,
+      repository: getWorkflowRepository(),
+    });
+    return {
+      status: request.status === "queued" ? "queued" : request.status,
+      workflowRunId: request.workflowRunId,
+      trackedSeasonId: `${movie.title.id}_movie`,
+    };
+  }
+
   const target = await trackingTargetFromCandidateId(candidateId);
   if (!target) {
     return {
@@ -143,8 +164,55 @@ export async function runNextQueuedWorkflow() {
   });
   if (series.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
+    return series;
   }
-  return series;
+  const movie = await runQueuedMovieAcquisition({
+    repository,
+    resourceProvider: getWorkerResourceProvider(),
+    storage: getWorkerStorageExecutor(),
+    agents: getAgentNodes(),
+    stagingParentDirectoryId: moviesParentDirectoryId(),
+    moviesParentDirectoryId: moviesParentDirectoryId(),
+  });
+  if (movie.status !== "idle") {
+    await pushNotificationsSince(repository, startedAt);
+  }
+  return movie;
+}
+
+function parseMovieCandidateId(candidateId: string): number | null {
+  const match = /^tmdb_movie_(\d+)$/.exec(candidateId);
+  return match ? Number(match[1]) : null;
+}
+
+async function movieTargetFromTmdbId(
+  tmdbId: number,
+): Promise<{ title: MediaTitle; keyword: string } | null> {
+  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb" && process.env.TMDB_READ_TOKEN) {
+    return prepareMovieTarget({
+      tmdbId,
+      qualityPreference: defaultQuality(),
+      metadataProvider: createTmdbMetadataProviderFromEnv(),
+    });
+  }
+  const candidate = findDemoCandidateByTmdbId(tmdbId);
+  if (!candidate || candidate.mediaType !== "movie") {
+    return null;
+  }
+  const title: MediaTitle = {
+    id: `tmdb_movie_${candidate.tmdbId}`,
+    tmdbId: candidate.tmdbId,
+    type: "movie",
+    title: candidate.title,
+    originalTitle: candidate.originalTitle,
+    year: candidate.year,
+    aliases:
+      candidate.originalTitle && candidate.originalTitle !== candidate.title ? [candidate.originalTitle] : [],
+    posterPath: candidate.posterPath,
+    backdropPath: candidate.backdropPath,
+    overview: candidate.overview,
+  };
+  return { title, keyword: `${candidate.title} ${defaultQuality()}`.trim() };
 }
 
 /**
