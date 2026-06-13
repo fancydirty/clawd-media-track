@@ -191,3 +191,58 @@ export async function dispatchNotifications(input: {
   }
   return { sent, failures };
 }
+
+/**
+ * Unified push dispatch: reads config from DB (priority: overrideConfig > DB >
+ * env), creates channels, and sends. Used by worker routes and test actions.
+ * Returns channel IDs that successfully sent.
+ */
+export async function sendPushNotifications(input: {
+  repository: { getSetting(key: string): Promise<string | null> };
+  notification: NotificationEvent;
+  overrideConfig?: Record<string, string>;
+  fetchImpl?: NotifyFetch;
+}): Promise<string[]> {
+  const config: Record<string, string> = {};
+
+  for (const key of ["bark", "serverchan", "wecom", "webhook"]) {
+    const override = input.overrideConfig?.[key];
+    const dbValue = await input.repository.getSetting(`push_${key}`);
+    const envKey =
+      key === "bark"
+        ? "MEDIA_TRACK_PUSH_BARK_KEY"
+        : key === "serverchan"
+          ? "MEDIA_TRACK_PUSH_SERVERCHAN_SENDKEY"
+          : key === "wecom"
+            ? "MEDIA_TRACK_PUSH_WECOM_WEBHOOK"
+            : "MEDIA_TRACK_PUSH_WEBHOOK_URL";
+    const envValue = process.env[envKey];
+    config[key] = (override || dbValue || envValue || "").trim();
+  }
+
+  const channels: NotifyChannel[] = [];
+  const shared = input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl };
+
+  if (config.bark) {
+    channels.push(createBarkChannel({ key: config.bark, ...shared }));
+  }
+  if (config.serverchan) {
+    channels.push(createServerChanChannel({ sendKey: config.serverchan, ...shared }));
+  }
+  if (config.wecom) {
+    channels.push(createWeComChannel({ webhookUrl: config.wecom, ...shared }));
+  }
+  if (config.webhook) {
+    channels.push(createWebhookChannel({ url: config.webhook, ...shared }));
+  }
+
+  if (channels.length === 0) {
+    return [];
+  }
+
+  const result = await dispatchNotifications({ channels, notifications: [input.notification] });
+  const sentChannels = channels
+    .filter((ch) => !result.failures.some((f) => f.channelId === ch.id))
+    .map((ch) => ch.id);
+  return sentChannels;
+}

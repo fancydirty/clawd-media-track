@@ -283,12 +283,20 @@ export async function runType3Monitoring(input: {
   const missingBefore = actionableMissingEpisodes(episodes);
 
   if (missingBefore.length === 0) {
+    const obtainedCount = episodes.filter((ep) => ep.obtained).length;
     const notification: NotificationEvent = {
       id: `notification_${workflowRunId}_noop`,
       workflowRunId,
       kind: "already_current",
-      title: `${input.title.title} already current`,
-      body: "0 episodes restored",
+      title: `${input.title.title} 已是最新`,
+      body: formatType3Report({
+        titleName: input.title.title,
+        seasonNumber: input.season.seasonNumber,
+        totalEpisodes: input.season.totalEpisodes,
+        obtainedCount,
+        newlyObtainedCodes: [],
+        stillMissingCodes: [],
+      }),
       createdAt: now(),
     };
     return {
@@ -359,23 +367,34 @@ export async function runType3Monitoring(input: {
   const providerAheadEpisodes = collectProviderAheadEpisodes(episodes);
   const stillMissingAfter = actionableMissingEpisodes(episodes);
   const restoredCount = missingBefore.length - stillMissingAfter.length;
+  const missingBeforeCodes = new Set(missingBefore);
+  const newlyObtained = episodes.filter((ep) => ep.obtained && missingBeforeCodes.has(ep.episodeCode));
+  const obtainedCount = episodes.filter((ep) => ep.obtained).length;
   const status = resolveAcquisitionStatus({ missingBefore, stillMissingAfter });
+  const reportBody = formatType3Report({
+    titleName: input.title.title,
+    seasonNumber: input.season.seasonNumber,
+    totalEpisodes: input.season.totalEpisodes,
+    obtainedCount,
+    newlyObtainedCodes: newlyObtained.map((ep) => ep.episodeCode),
+    stillMissingCodes: stillMissingAfter,
+  });
   const notification: NotificationEvent =
     status === "no_coverage"
       ? {
           id: `notification_${workflowRunId}`,
           workflowRunId,
           kind: "no_coverage",
-          title: `${input.title.title} no covering resource yet`,
-          body: `no covering resource found yet; ${restoredCount} episodes restored`,
+          title: `${input.title.title} 暂无资源覆盖`,
+          body: reportBody,
           createdAt: now(),
         }
       : {
           id: `notification_${workflowRunId}`,
           workflowRunId,
           kind: "episodes_restored",
-          title: `${input.title.title} episodes restored`,
-          body: `${restoredCount} episodes restored`,
+          title: `${input.title.title} 第 ${input.season.seasonNumber} 季更新`,
+          body: reportBody,
           createdAt: now(),
         };
 
@@ -1198,4 +1217,44 @@ function collectProviderAheadEpisodes(episodes: EpisodeState[]): string[] {
   return episodes
     .filter((episode) => episode.obtained && episode.metadataStatus === "provider_ahead")
     .map((episode) => episode.episodeCode);
+}
+
+/**
+ * Format Type 3 monitoring report for end users: show title + new episodes +
+ * status. Skip process details (steps, links, etc) — users only care about
+ * what's updated and what's missing.
+ */
+function formatType3Report(input: {
+  titleName: string;
+  seasonNumber: number;
+  totalEpisodes: number;
+  obtainedCount: number;
+  newlyObtainedCodes: string[];
+  stillMissingCodes: string[];
+}): string {
+  const parts: string[] = [];
+  parts.push(`📺 ${input.titleName} 第 ${input.seasonNumber} 季`);
+  parts.push("");
+
+  if (input.newlyObtainedCodes.length > 0) {
+    const codes = input.newlyObtainedCodes.map((code) => code.replace(/^S\d+/, "")).join("、");
+    parts.push(`✅ 新获取：${codes}`);
+  }
+
+  const isComplete = input.obtainedCount === input.totalEpisodes;
+  const statusLabel = isComplete
+    ? `已全部入库（${input.obtainedCount}/${input.totalEpisodes} 集）`
+    : input.stillMissingCodes.length === 0
+      ? `追更中（${input.obtainedCount}/${input.totalEpisodes} 集）`
+      : `部分入库（${input.obtainedCount}/${input.totalEpisodes} 集）`;
+  parts.push(`📊 状态：${statusLabel}`);
+
+  if (input.stillMissingCodes.length > 0 && !isComplete) {
+    const missingCodes = input.stillMissingCodes
+      .map((code) => code.replace(/^S\d+/, ""))
+      .join("、");
+    parts.push(`🔴 缺集：${missingCodes}`);
+  }
+
+  return parts.join("\n");
 }

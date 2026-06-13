@@ -20,6 +20,7 @@ import {
   runQueuedSeriesInitialization,
   runQueuedType2Workflow,
   runScheduledType3Monitoring,
+  sendPushNotifications,
   SQLiteWorkflowRepository,
   type AgentNodes,
   type MediaSearchCandidate,
@@ -145,17 +146,13 @@ export async function runNextQueuedWorkflow() {
 
 /**
  * Outbound push rides on the feed: whatever notifications a run persisted
- * are delivered to every user-configured channel. Delivery failures are
- * logged, never thrown — the run already succeeded.
+ * are delivered to every user-configured channel (DB config > env). Delivery
+ * failures are logged, never thrown — the run already succeeded.
  */
 async function pushNotificationsSince(
   targetRepository: WorkflowRepository,
   sinceIso: string,
 ): Promise<void> {
-  const channels = createNotifyChannelsFromEnv();
-  if (channels.length === 0) {
-    return;
-  }
   try {
     const recent = (await targetRepository.listNotifications({ limit: 20 })).filter(
       (notification) => notification.createdAt >= sinceIso,
@@ -163,14 +160,17 @@ async function pushNotificationsSince(
     if (recent.length === 0) {
       return;
     }
-    const result = await dispatchNotifications({ channels, notifications: recent });
-    for (const failure of result.failures) {
-      console.error(
-        `[media-track] push via ${failure.channelId} failed for ${failure.notificationId}: ${failure.error}`,
-      );
+    for (const notification of recent) {
+      try {
+        await sendPushNotifications({ repository: targetRepository, notification });
+      } catch (error) {
+        console.error(
+          `[media-track] push for ${notification.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   } catch (error) {
-    console.error(`[media-track] notification push failed: ${String(error)}`);
+    console.error(`[media-track] notification push batch failed: ${String(error)}`);
   }
 }
 

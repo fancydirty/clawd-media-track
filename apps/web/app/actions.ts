@@ -150,3 +150,62 @@ export async function requestRemainingAction(input: {
   revalidatePath("/");
   return { status: "requested", message: "剩余季已加入后台队列。" };
 }
+
+export interface PushSettingsActionResult {
+  success: boolean;
+  message?: string;
+  sentTo?: string[];
+}
+
+export async function savePushSettingsAction(
+  settings: Record<string, string>,
+): Promise<PushSettingsActionResult> {
+  try {
+    const { getWorkflowRepository } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    
+    const keys = ["bark", "serverchan", "wecom", "webhook"];
+    for (const key of keys) {
+      const value = settings[key]?.trim() ?? "";
+      await repository.setSetting(`push_${key}`, value);
+    }
+    
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function testPushNotificationAction(
+  settings: Record<string, string>,
+): Promise<PushSettingsActionResult> {
+  try {
+    const { sendPushNotifications } = await import("@media-track/workflow");
+    const { getWorkflowRepository } = await import("../lib/workflow-runtime");
+    
+    const repository = getWorkflowRepository();
+    const configFromDb: Record<string, string> = {};
+    for (const key of ["bark", "serverchan", "wecom", "webhook"]) {
+      const dbValue = await repository.getSetting(`push_${key}`);
+      const formValue = settings[key]?.trim();
+      configFromDb[key] = formValue || dbValue || "";
+    }
+    
+    const sentTo = await sendPushNotifications({
+      repository,
+      notification: {
+        id: "test_" + Date.now(),
+        workflowRunId: "test",
+        kind: "test",
+        title: "📢 Media Track 测试通知",
+        body: "如果你收到这条消息，说明推送渠道配置成功！",
+        createdAt: new Date().toISOString(),
+      },
+      overrideConfig: configFromDb,
+    });
+    
+    return { success: true, sentTo };
+  } catch (error) {
+    return { success: false, message: `测试失败：${String(error)}` };
+  }
+}

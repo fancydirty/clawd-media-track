@@ -1844,3 +1844,76 @@ li.hub-season-row.untracked {
 .season-menu-toggle[aria-expanded="true"] svg {
   transform: rotate(180deg);
 }
+
+/* Push notification settings form */
+.push-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 0;
+}
+
+.push-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.push-channel label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.push-channel label strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.push-help {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.push-help a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.push-help a:hover {
+  text-decoration: underline;
+}
+
+.push-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+
+.push-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.push-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.push-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.push-result {
+  font-size: 13px;
+  color: var(--text-muted);
+}
