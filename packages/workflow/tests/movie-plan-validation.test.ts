@@ -71,6 +71,24 @@ describe("validateMoviePlan", () => {
     ).toThrow(/at most one/);
   });
 
+  it("ignores rejected dispositions for candidates from earlier (non-selected) snapshots", () => {
+    // Live agents search multiple keywords; they may explain they rejected
+    // candidates seen in an earlier snapshot while selecting from a later one.
+    const snapA = snapshot("a", ["旧搜索结果"]);
+    const snapB = snapshot("b", ["奥本海默 4K"]);
+    const result = validateMoviePlan({
+      plan: plan({
+        selectedSnapshotId: "b",
+        candidateDispositions: [
+          { candidateId: "a_c1", disposition: "rejected", episodes: [], reason: "wrong keyword noise" },
+          { candidateId: "b_c1", disposition: "selected", episodes: ["S01E01"], reason: "exact match" },
+        ],
+      }),
+      snapshots: [snapA, snapB],
+    });
+    expect(result.selectedCandidate?.id).toBe("b_c1");
+  });
+
   it("rejects a candidate that was not observed in this run", () => {
     expect(() =>
       validateMoviePlan({

@@ -63,7 +63,7 @@ Judgment rules (apply simultaneously over the full candidate evidence):
 
 Output contract:
 - Select at most one snapshotId, and it must come from a searchResources observation in this run.
-- Give exactly one disposition (selected / rejected / uncertain) for EVERY candidate in the selected snapshot. Silent omission is a contract violation.
+- Give exactly one disposition (selected / rejected / uncertain) for EVERY candidate in the selected snapshot. Silent omission is a contract violation. Do NOT include dispositions for candidates from other snapshots.
 - The single selected candidate must list episodes exactly ["S01E01"] — the movie's one synthetic episode. Reject/uncertain candidates list [].
 - If nothing is confidently the target movie after a reasonable search, return selectedSnapshotId null with your reasoning. "Not found yet" is a valid, honest outcome.`,
   toolInputSchemas: {
