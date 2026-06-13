@@ -258,4 +258,50 @@ describe("TmdbSearchProvider", () => {
       },
     ]);
   });
+
+  it("classifies a Japanese animation as anime while keeping the tmdb_tv id for routing", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/240411?")) {
+          return {
+            id: 240411,
+            name: "葬送的芙莉莲",
+            original_name: "葬送のフリーレン",
+            first_air_date: "2023-09-29",
+            number_of_episodes: 28,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 28 },
+            seasons: [{ season_number: 1, episode_count: 28 }],
+            genres: [{ id: 16, name: "动画" }, { id: 10765, name: "Sci-Fi & Fantasy" }],
+            origin_country: ["JP"],
+          };
+        }
+        if (url.includes("/tv/240411/season/1?")) {
+          return {
+            id: 1,
+            season_number: 1,
+            episodes: Array.from({ length: 28 }, (_, index) => ({
+              episode_number: index + 1,
+              air_date: "2023-09-29",
+            })),
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const target = await prepareTrackingTarget({
+      tmdbId: 240411,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+    });
+
+    expect(target.title.type).toBe("anime");
+    expect(target.title.id).toBe("tmdb_tv_240411");
+  });
 });

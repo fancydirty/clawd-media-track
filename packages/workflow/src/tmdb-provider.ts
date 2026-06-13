@@ -4,7 +4,17 @@ import type {
   MediaType,
   TrackedSeason,
 } from "./domain.js";
+import { classifyMediaType } from "./media-classification.js";
 import type { MediaSearchCandidate, MediaSearchProvider } from "./search-view.js";
+
+/** Refine a TV details record into tv/anime by genre + origin. */
+function tvMediaType(details: TmdbTvDetails): MediaType {
+  return classifyMediaType({
+    baseType: "tv",
+    genreIds: details.genres,
+    originCountries: details.origin_country,
+  });
+}
 
 export interface TmdbFetchInit {
   method: "GET";
@@ -57,6 +67,8 @@ interface TmdbTvDetails {
     season_number?: number;
     episode_count?: number;
   }>;
+  genres: number[];
+  origin_country: string[];
 }
 
 interface TmdbSeasonDetails {
@@ -210,7 +222,7 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
     title: {
       id: titleId,
       tmdbId: details.id,
-      type: "tv",
+      type: tvMediaType(details),
       title,
       originalTitle: normalizeTitle(details.original_name) || title,
       year: yearFromDate(details.first_air_date),
@@ -281,7 +293,7 @@ export async function prepareSeriesTarget(input: {
     title: {
       id: titleId,
       tmdbId: details.id,
-      type: "tv",
+      type: tvMediaType(details),
       title,
       originalTitle: normalizeTitle(details.original_name) || title,
       year: yearFromDate(details.first_air_date),
@@ -324,6 +336,15 @@ function parseTvDetails(value: unknown): TmdbTvDetails {
       : null,
     seasons: Array.isArray(value["seasons"])
       ? value["seasons"].filter(isRecord).map(optionalSeasonSummary)
+      : [],
+    genres: Array.isArray(value["genres"])
+      ? value["genres"]
+          .filter(isRecord)
+          .map((genre) => optionalNumberValue(genre["id"]))
+          .filter((id): id is number => id !== undefined)
+      : [],
+    origin_country: Array.isArray(value["origin_country"])
+      ? value["origin_country"].filter((country): country is string => typeof country === "string")
       : [],
   };
 }

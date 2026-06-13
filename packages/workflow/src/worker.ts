@@ -6,7 +6,18 @@ import {
   runType2InitializationAndPersist,
   runType3MonitoringAndPersist,
 } from "./runner.js";
+import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import type { AcquisitionSeasonScope } from "./workflow.js";
+
+/**
+ * Refresh a tracked season's aired/total counts from TMDB. Returning null (or
+ * throwing) leaves the season on its stored counts — the sweep still runs, it
+ * just won't discover episodes aired since tracking began.
+ */
+export type SeasonMetadataSync = (input: {
+  tmdbId: number;
+  seasonNumber: number;
+}) => Promise<{ latestAiredEpisode: number; totalEpisodes: number } | null>;
 
 export type QueuedType2WorkerResult =
   | {
@@ -130,6 +141,7 @@ export async function runScheduledType3Monitoring(input: {
   now?: () => string;
   createWorkflowRunId?: () => string;
   staleActiveRunTimeoutMs?: number;
+  syncSeasonMetadata?: SeasonMetadataSync;
 }): Promise<ScheduledType3Outcome[]> {
   const now = input.now ?? (() => new Date().toISOString());
   const outcomes: ScheduledType3Outcome[] = [];
@@ -139,18 +151,44 @@ export async function runScheduledType3Monitoring(input: {
     if (state.season.status !== "active" || state.episodes.length === 0) {
       continue;
     }
+
+    // sync_all equivalent: refresh aired/total from TMDB so episodes that aired
+    // after tracking began surface as real gaps this sweep can acquire.
+    let season = state.season;
+    let episodes = state.episodes;
+    if (input.syncSeasonMetadata) {
+      try {
+        const meta = await input.syncSeasonMetadata({
+          tmdbId: state.title.tmdbId,
+          seasonNumber: state.season.seasonNumber,
+        });
+        if (meta) {
+          const synced = syncSeasonAgainstMetadata({
+            season,
+            episodes,
+            latestAiredEpisode: meta.latestAiredEpisode,
+            totalEpisodes: meta.totalEpisodes,
+          });
+          season = synced.season;
+          episodes = synced.episodes;
+        }
+      } catch {
+        // Metadata sync is best-effort; fall back to stored counts.
+      }
+    }
+
     const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
     const startedAt = now();
     const staleActiveRunStartedBefore = staleStartedBefore(startedAt, input.staleActiveRunTimeoutMs);
 
     const reservation = await input.repository.reserveWorkflowRun({
       title: state.title,
-      season: state.season,
+      season,
       workflowRun: {
         id: workflowRunId,
         kind: "type3_monitor",
         status: "running",
-        trackedSeasonId: state.season.id,
+        trackedSeasonId: season.id,
         startedAt,
         finishedAt: null,
         auditEvents: [
@@ -160,7 +198,7 @@ export async function runScheduledType3Monitoring(input: {
           },
         ],
       },
-      episodes: state.episodes,
+      episodes,
       resourceSnapshots: [],
       decisions: [],
       transferAttempts: [],
@@ -170,16 +208,16 @@ export async function runScheduledType3Monitoring(input: {
         : { staleActiveRunStartedBefore, staleFinishedAt: startedAt }),
     });
     if (reservation.status !== "reserved") {
-      outcomes.push({ trackedSeasonId: state.season.id, status: "skipped_active" });
+      outcomes.push({ trackedSeasonId: season.id, status: "skipped_active" });
       continue;
     }
 
     try {
       const result = await runType3MonitoringAndPersist({
         title: state.title,
-        season: state.season,
-        episodes: state.episodes,
-        keyword: `${state.title.title} ${state.season.qualityPreference}`.trim(),
+        season,
+        episodes,
+        keyword: `${state.title.title} ${season.qualityPreference}`.trim(),
         resourceProvider: input.resourceProvider,
         storage: input.storage,
         agents: input.agents,

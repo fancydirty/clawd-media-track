@@ -10,3 +10,8 @@ export async function POST(request: NextRequest) {
   const result = await runNextQueuedWorkflow();
   return NextResponse.json(result);
 }
+
+// Vercel Cron / system cron hit scheduled endpoints with GET; reuse POST.
+export async function GET(request: NextRequest) {
+  return POST(request);
+}

@@ -144,6 +144,57 @@ describe("runScheduledType3Monitoring", () => {
     expect(saved?.obtainedEpisodes).toEqual(["S01E01", "S01E02"]);
   });
 
+  it("syncs against fresh TMDB metadata and acquires episodes that aired after tracking began", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title } = trackedFixture("airing");
+    // Tracked at 2/4 aired; E01+E02 already obtained → without a sync this is a noop.
+    const season: TrackedSeason = {
+      ...trackedFixture("airing").season,
+      totalEpisodes: 4,
+      latestAiredEpisode: 2,
+    };
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01", "S01E02"] });
+    const storage = new FakeStorageExecutor({
+      directories: {
+        [season.storageDirectoryId]: [
+          verifiedFile(season, "kept_e01", "S01E01"),
+          verifiedFile(season, "kept_e02", "S01E02"),
+        ],
+      },
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "",
+          files: [verifiedFile(season, "new_e03", "S01E03"), verifiedFile(season, "new_e04", "S01E04")],
+        },
+      },
+    });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: {
+          "Show 4K": [
+            { title: "Show S01E03-E04 4K", episodeHints: ["S01E03", "S01E04"], qualityHints: ["4K"] },
+          ],
+        },
+      }),
+      storage,
+      agents: new FakeAgentNodes(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_sync_type3",
+      // TMDB now reports episode 4 as the latest aired.
+      syncSeasonMetadata: async () => ({ latestAiredEpisode: 4, totalEpisodes: 4 }),
+    });
+
+    expect(outcomes[0]).toMatchObject({ trackedSeasonId: season.id, status: "ran", workflowStatus: "succeeded" });
+    const saved = await repository.getWorkflowRunSnapshot("run_sync_type3");
+    // The newly-aired E03/E04 were exposed by the sync and acquired.
+    expect(saved?.obtainedEpisodes).toEqual(["S01E01", "S01E02", "S01E03", "S01E04"]);
+    expect(saved?.season.latestAiredEpisode).toBe(4);
+  });
+
   it("records a noop run when a tracked season is already current", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();

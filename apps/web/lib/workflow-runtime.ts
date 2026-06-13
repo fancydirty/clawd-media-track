@@ -28,6 +28,7 @@ import {
   type MediaTitle,
   type NotificationEvent,
   type ResourceProvider,
+  type SeasonMetadataSync,
   type StorageExecutor,
   type TrackedSeason,
   type TrackedSeasonStatusView,
@@ -260,6 +261,7 @@ export async function runScheduledType3() {
   const repository = getWorkflowRepository();
   await hydratePan115CookieFromDb();
   const startedAt = new Date().toISOString();
+  const sync = tmdbSeasonMetadataSync();
   const result = await runScheduledType3Monitoring({
     repository,
     resourceProvider: getWorkerResourceProvider(),
@@ -267,9 +269,35 @@ export async function runScheduledType3() {
     agents: getAgentNodes(),
     storageParentDirectoryId: storageParentDirectoryId(),
     staleActiveRunTimeoutMs: 30 * 60 * 1000,
+    ...(sync ? { syncSeasonMetadata: sync } : {}),
   });
   await pushNotificationsSince(repository, startedAt);
   return result;
+}
+
+/**
+ * The Type 3 sweep's TMDB re-sync (the GUI's `sync_all`): refresh each tracked
+ * season's aired/total from TMDB so the sweep discovers episodes that aired
+ * after tracking began. Returns undefined when TMDB isn't configured, leaving
+ * the sweep on stored counts.
+ */
+function tmdbSeasonMetadataSync(): SeasonMetadataSync | undefined {
+  if (!(process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb" && process.env.TMDB_READ_TOKEN)) {
+    return undefined;
+  }
+  return async ({ tmdbId, seasonNumber }) => {
+    const target = await prepareTrackingTarget({
+      tmdbId,
+      mediaType: "tv",
+      seasonNumber,
+      qualityPreference: defaultQuality(),
+      metadataProvider: createTmdbMetadataProviderFromEnv(),
+    });
+    return {
+      latestAiredEpisode: target.season.latestAiredEpisode,
+      totalEpisodes: target.season.totalEpisodes,
+    };
+  };
 }
 
 async function seedDemoIfEmpty(targetRepository: WorkflowRepository): Promise<void> {
