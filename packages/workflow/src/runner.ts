@@ -5,6 +5,7 @@ import type {
   WorkflowKind,
   WorkflowRun,
 } from "./domain.js";
+import { runMovieAcquisition, type MovieWorkflowResult } from "./movie-workflow.js";
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 import {
@@ -89,6 +90,50 @@ export async function runType3MonitoringAndPersist(input: {
     workflowRun: toWorkflowRun("type3_monitor", input.season.id, input.workflowRun, result),
     result,
     repository: input.repository,
+  });
+
+  return result;
+}
+
+export async function runMovieAcquisitionAndPersist(input: {
+  title: MediaTitle;
+  keyword: string;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  agents: AgentNodes;
+  repository: WorkflowRepository;
+  workflowRun: WorkflowRunMetadata;
+  stagingParentDirectoryId: string;
+  moviesParentDirectoryId: string;
+}): Promise<MovieWorkflowResult> {
+  const result = await runMovieAcquisition({
+    title: input.title,
+    keyword: input.keyword,
+    resourceProvider: input.resourceProvider,
+    storage: input.storage,
+    agents: input.agents,
+    workflowRunId: input.workflowRun.id,
+    stagingParentDirectoryId: input.stagingParentDirectoryId,
+    moviesParentDirectoryId: input.moviesParentDirectoryId,
+  });
+
+  await input.repository.saveWorkflowRunSnapshot({
+    title: input.title,
+    season: result.season,
+    workflowRun: {
+      id: input.workflowRun.id,
+      kind: "movie_init",
+      status: result.status,
+      trackedSeasonId: result.season.id,
+      startedAt: input.workflowRun.startedAt,
+      finishedAt: input.workflowRun.finishedAt,
+      auditEvents: result.auditEvents,
+    },
+    episodes: result.episodes,
+    resourceSnapshots: result.resourceSnapshots,
+    decisions: result.decisions,
+    transferAttempts: result.transferAttempts,
+    notifications: result.notifications,
   });
 
   return result;

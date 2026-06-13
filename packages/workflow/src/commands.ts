@@ -1,5 +1,6 @@
 import {
   createEpisodeStates,
+  movieAnchorSeason,
   type EpisodeState,
   type MediaTitle,
   type NotificationEvent,
@@ -429,6 +430,73 @@ export async function queueSeriesInitialization(input: {
       titleId: input.title.id,
       workflowRunId: reservation.snapshot.workflowRun.id,
     };
+  }
+  if (reservation.status === "already_has_episode_state") {
+    return { status: "already_tracked", titleId: input.title.id, workflowRunId: null };
+  }
+  return { status: "queued", titleId: input.title.id, workflowRunId };
+}
+
+export interface MovieAcquisitionRequestResult {
+  status: "queued" | "already_running" | "already_tracked";
+  titleId: string;
+  workflowRunId: string | null;
+}
+
+/**
+ * "获取电影" entrypoint. Reserves one queued movie_init run on the movie's
+ * single-season anchor (title lock prevents overlapping acquisitions of the
+ * same film); the worker claims it and runs the movie acquisition workflow.
+ */
+export async function queueMovieAcquisition(input: {
+  title: MediaTitle;
+  keyword: string;
+  repository: WorkflowRepository;
+  createWorkflowRunId?: () => string;
+  now?: () => string;
+  staleActiveRunTimeoutMs?: number;
+}): Promise<MovieAcquisitionRequestResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
+  const queuedAt = now();
+  const staleActiveRunStartedBefore = staleStartedBefore(queuedAt, input.staleActiveRunTimeoutMs);
+  const season = movieAnchorSeason({
+    titleId: input.title.id,
+    qualityPreference: "4K",
+    storageDirectoryId: "",
+  });
+
+  const reservation = await input.repository.reserveWorkflowRun({
+    title: input.title,
+    season,
+    workflowRun: {
+      id: workflowRunId,
+      kind: "movie_init",
+      status: "queued",
+      trackedSeasonId: season.id,
+      startedAt: queuedAt,
+      finishedAt: null,
+      auditEvents: [
+        {
+          type: "movie_init_queued",
+          message: `Queued movie acquisition workflow ${workflowRunId}`,
+          data: { keyword: input.keyword },
+        },
+      ],
+    },
+    episodes: [],
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    blockIfEpisodeStatesExist: true,
+    blockIfTitleHasActiveRun: true,
+    ...(staleActiveRunStartedBefore
+      ? { staleActiveRunStartedBefore, staleFinishedAt: queuedAt }
+      : {}),
+  });
+  if (reservation.status === "already_active") {
+    return { status: "already_running", titleId: input.title.id, workflowRunId: reservation.snapshot.workflowRun.id };
   }
   if (reservation.status === "already_has_episode_state") {
     return { status: "already_tracked", titleId: input.title.id, workflowRunId: null };

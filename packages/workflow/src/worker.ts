@@ -2,6 +2,7 @@ import type { WorkflowStatus } from "./domain.js";
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistedWorkflowRunSnapshot, WorkflowRepository } from "./repository.js";
 import {
+  runMovieAcquisitionAndPersist,
   runSeriesInitializationAndPersist,
   runType2InitializationAndPersist,
   runType3MonitoringAndPersist,
@@ -288,6 +289,63 @@ function keywordFromQueuedRun(snapshot: PersistedWorkflowRunSnapshot): string {
     return queuedEvent.data["keyword"];
   }
   return `${snapshot.title.title} ${snapshot.season.qualityPreference}`.trim();
+}
+
+export async function runQueuedMovieAcquisition(input: {
+  repository: WorkflowRepository;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  agents: AgentNodes;
+  stagingParentDirectoryId: string;
+  moviesParentDirectoryId: string;
+  now?: () => string;
+}): Promise<QueuedType2WorkerResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const claimed = await input.repository.claimNextQueuedWorkflowRun({ kind: "movie_init", now: now() });
+  if (!claimed) {
+    return { status: "idle" };
+  }
+
+  const queuedEvent = claimed.workflowRun.auditEvents.find(
+    (event) => event.type === "movie_init_queued" && typeof event.data?.["keyword"] === "string",
+  );
+  const keyword =
+    typeof queuedEvent?.data?.["keyword"] === "string"
+      ? queuedEvent.data["keyword"]
+      : `${claimed.title.title} 4K`.trim();
+
+  try {
+    const result = await runMovieAcquisitionAndPersist({
+      title: claimed.title,
+      keyword,
+      resourceProvider: input.resourceProvider,
+      storage: input.storage,
+      agents: input.agents,
+      repository: input.repository,
+      workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: now() },
+      stagingParentDirectoryId: input.stagingParentDirectoryId,
+      moviesParentDirectoryId: input.moviesParentDirectoryId,
+    });
+    return { status: "ran", workflowRunId: claimed.workflowRun.id, workflowStatus: result.status };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    await input.repository.saveWorkflowRunSnapshot({
+      title: claimed.title,
+      season: claimed.season,
+      workflowRun: {
+        ...claimed.workflowRun,
+        status: "failed",
+        finishedAt: now(),
+        auditEvents: [...claimed.workflowRun.auditEvents, { type: "workflow_failed", message: errorMessage }],
+      },
+      episodes: [],
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    return { status: "failed", workflowRunId: claimed.workflowRun.id, errorMessage };
+  }
 }
 
 export async function runQueuedSeriesInitialization(input: {
